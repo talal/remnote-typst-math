@@ -1,0 +1,51 @@
+{
+  "name": "remnote-typst-math",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "check": "vp check",
+    "lint": "vp lint",
+    "fmt": "vp fmt",
+    "check-types": "tsc --noEmit",
+    "test": "vp test",
+    "dev": "cross-env NODE_ENV=development webpack-dev-server --color --progress --no-open",
+    "build": "npx remnote-plugin validate && shx rm -rf dist && cross-env NODE_ENV=production webpack --color --progress && cd dist && bestzip ../PluginZip.zip ./*"
+  },
+  "dependencies": {
+    "@remnote/plugin-sdk": "^0.0.46",
+    "prismjs": "^1.30.0",
+    "react": "^17.0.2",
+    "react-dom": "^17.0.2"
+  },
+  "devDependencies": {
+    "@playwright/cli": "^0.1.18",
+    "@pmmmwh/react-refresh-webpack-plugin": "^0.5.7",
+    "@types/node": "^18.0.3",
+    "@types/prismjs": "^1.26.6",
+    "@types/react": "^17.0.2",
+    "@types/react-dom": "^17.0.2",
+    "autoprefixer": "^10.4.7",
+    "bestzip": "^2.2.1",
+    "chrome-devtools-mcp": "^1.7.0",
+    "copy-webpack-plugin": "^11.0.0",
+    "cross-env": "^7.0.3",
+    "css-loader": "^6.7.1",
+    "esbuild-loader": "^2.19.0",
+    "html-webpack-plugin": "^5.5.0",
+    "mini-css-extract-plugin": "^2.6.1",
+    "postcss": "^8.4.14",
+    "postcss-import": "^14.1.0",
+    "postcss-loader": "^7.0.0",
+    "react-refresh": "^0.14.0",
+    "shx": "^0.3.4",
+    "style-loader": "^3.3.1",
+    "tailwindcss": "^3.1.5",
+    "typescript": "^4.7.4",
+    "vite-plus": "^0.2.9",
+    "vitest": "^0.34.6",
+    "webpack": "^5.73.0",
+    "webpack-cli": "^4.10.0",
+    "webpack-dev-server": "^4.9.3"
+  }
+}

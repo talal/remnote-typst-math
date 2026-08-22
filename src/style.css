@@ -1,0 +1,173 @@
+/*
+ * This file contains the tailwind directives and equivalent styles
+ * to replicate the behavior inside the Shadow DOM of native plugins.
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+1. Use a consistent sensible line-height in all browsers.
+2. Prevent adjustments of font size after orientation changes in iOS.
+3. Use a more readable tab size.
+*/
+
+html,
+:host-context(div) {
+  line-height: 1.5; /* 1 */
+  -webkit-text-size-adjust: 100%; /* 2 */
+  -moz-tab-size: 4; /* 3 */
+  tab-size: 4; /* 3 */
+}
+
+/*
+1. Remove the margin in all browsers.
+2. Inherit line-height from `html` so users can set them as a class directly on the `html` element.
+*/
+
+body,
+:host {
+  margin: 0; /* 1 */
+  line-height: inherit; /* 2 */
+}
+
+/**
+*/
+
+body,
+:host {
+  margin: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell',
+    'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+/* Prism Typst Syntax Highlighting */
+.token.comment {
+  color: #6c6c7b;
+  font-style: italic;
+}
+
+.token.string {
+  color: #a6e3a1;
+}
+
+.token.function {
+  color: #ef855f;
+  font-weight: 500;
+}
+
+.token.keyword {
+  color: #f38ba8;
+}
+
+.token.parameter,
+.token.attr-name {
+  color: #fab387;
+}
+
+.token.builtin,
+.token.constant {
+  color: #89dceb;
+}
+
+.token.number {
+  color: #cba6f7;
+}
+
+.token.operator {
+  color: #5e79ff;
+}
+
+.token.variable,
+.token.symbol {
+  color: #93c5fd;
+}
+
+.token.punctuation {
+  color: #a6a6b8;
+}
+
+/* Monospace Editor & Cursor Styles */
+.typst-editor-input,
+.typst-editor-highlight {
+  @apply font-mono;
+  font-size: 13.5px !important;
+  line-height: 1.5 !important;
+  letter-spacing: 0 !important;
+  tab-size: 2 !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  padding: 4px 28px 4px 4px !important;
+  margin: 0 !important;
+  border: none !important;
+  box-sizing: border-box !important;
+}
+
+.typst-editor-input {
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  caret-color: #1b1b1f !important;
+  background: transparent !important;
+  resize: vertical;
+  outline: none !important;
+}
+
+:is(.dark, [data-theme='dark'], :host-context(.dark)) .typst-editor-input {
+  caret-color: #ffffff !important;
+}
+
+.typst-editor-input::placeholder {
+  color: #7c7c8f !important;
+  -webkit-text-fill-color: #7c7c8f !important;
+}
+
+.typst-editor-input::selection {
+  background: rgba(94, 121, 255, 0.35) !important;
+}
+
+.typst-editor-highlight {
+  pointer-events: none;
+  background: transparent !important;
+  overflow: hidden;
+}
+
+/* Active segmented toggle button and Done button styling */
+.typst-math-popup button.btn-active,
+.typst-math-popup button.btn-done {
+  background-color: #5e79ff !important;
+  color: #ffffff !important;
+}
+
+.typst-math-popup button.btn-active *,
+.typst-math-popup button.btn-done * {
+  color: #ffffff !important;
+}
+
+.typst-math-popup button.btn-done:hover {
+  background-color: #4d6cf5 !important;
+}
+
+/* Tooltip kbd badge styling */
+.typst-math-popup kbd {
+  @apply font-sans;
+  font-size: 10px !important;
+  line-height: 1 !important;
+  font-weight: 500 !important;
+}
+
+/* Dark mode tooltip kbd text */
+:is(.dark, [data-theme='dark'], :host-context(.dark)) .typst-math-popup kbd {
+  background-color: #323242 !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.3) !important;
+}
+
+/* Light mode tooltip kbd */
+:is(html:not(.dark)) .typst-math-popup kbd {
+  background-color: rgba(0, 0, 0, 0.05) !important;
+  color: #6b7280 !important;
+  border-color: rgba(229, 231, 235, 0.9) !important;
+}

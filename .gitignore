@@ -1,0 +1,13 @@
+!AGENTS.md
+!.agents/
+.agents/scratch/
+.playwright-cli/
+.playwright/
+skills-lock.json
+
+*.local
+*.zip
+.DS_Store
+dist
+dist-ssr
+node_modules

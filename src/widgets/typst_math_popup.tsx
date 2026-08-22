@@ -1,0 +1,388 @@
+import React, { useEffect, useRef, useState } from 'react';
+import { renderWidget, usePlugin, WidgetLocation } from '@remnote/plugin-sdk';
+import type { KeyboardEvent } from 'react';
+import '../style.css';
+import { ConversionError, initializeConverter, typstToLatex } from '../math/converter';
+import { createNativeLatex, insertRichTextAtRange } from '../math/remnote-math';
+import { highlightTypst } from '../math/typst-grammar';
+import { type MathEditorTarget, type TypstMathPopupData } from '../commands/math';
+
+type PopupState = {
+  target: MathEditorTarget;
+  initialSource: string;
+  initialError?: string;
+  isEditing?: boolean;
+  isBlock?: boolean;
+};
+
+function readPopupState(data: unknown): PopupState | undefined {
+  if (!data || typeof data !== 'object' || !('target' in data)) {
+    return undefined;
+  }
+
+  const candidate = data as Partial<TypstMathPopupData>;
+  if (
+    !candidate.target ||
+    typeof candidate.target !== 'object' ||
+    typeof candidate.target.remId !== 'string' ||
+    !candidate.target.range ||
+    typeof candidate.target.range.start !== 'number' ||
+    typeof candidate.target.range.end !== 'number'
+  ) {
+    return undefined;
+  }
+
+  return {
+    target: candidate.target,
+    initialSource: typeof candidate.initialSource === 'string' ? candidate.initialSource : '',
+    initialError: typeof candidate.initialError === 'string' ? candidate.initialError : undefined,
+    isEditing: Boolean(candidate.isEditing),
+    isBlock: Boolean(candidate.isBlock),
+  };
+}
+
+function formatError(error: unknown): string {
+  if (error instanceof ConversionError || error instanceof Error) {
+    return error.message;
+  }
+
+  return 'Unable to insert Typst math.';
+}
+
+function TypstMathPopup() {
+  const plugin = usePlugin();
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [popupState, setPopupState] = useState<PopupState>();
+  const [source, setSource] = useState('');
+  const [isBlock, setIsBlock] = useState(false);
+  const [error, setError] = useState<string>();
+  const [pending, setPending] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadData() {
+      try {
+        const sessionData = await plugin.storage.getSession<TypstMathPopupData>('typst_math_data');
+        let state: PopupState | undefined;
+        if (sessionData && sessionData.target) {
+          state = {
+            target: sessionData.target,
+            initialSource: sessionData.initialSource || '',
+            initialError: sessionData.initialError,
+            isEditing: Boolean(sessionData.isEditing),
+            isBlock: Boolean(sessionData.isBlock),
+          };
+        } else {
+          const context = await plugin.widget.getWidgetContext<WidgetLocation.Popup>();
+          state = readPopupState(context.contextData);
+        }
+
+        if (!active) return;
+
+        if (!state) {
+          setError('The editor target could not be recovered.');
+          return;
+        }
+
+        setPopupState(state);
+        setSource(state.initialSource);
+        setIsBlock(Boolean(state.isBlock));
+        setError(state.initialError);
+      } catch (contextError: unknown) {
+        if (active) {
+          setError(formatError(contextError));
+        }
+      }
+    }
+
+    void loadData();
+
+    return () => {
+      active = false;
+    };
+  }, [plugin]);
+
+  useEffect(() => {
+    if (popupState) {
+      inputRef.current?.focus();
+    }
+  }, [popupState]);
+
+  async function closePopup(): Promise<void> {
+    try {
+      await plugin.window.closeAllFloatingWidgets();
+    } catch {
+      await plugin.widget.closePopup(true);
+    }
+  }
+
+  async function save(): Promise<void> {
+    if (pending) return;
+    if (!popupState) {
+      const message = 'The editor target is still loading. Try again.';
+      setError(message);
+      await plugin.app.toast(message);
+      return;
+    }
+
+    const input = source.trim();
+    if (!input) {
+      setError('Enter a Typst math expression first.');
+      return;
+    }
+
+    setPending(true);
+    setError(undefined);
+
+    try {
+      await initializeConverter();
+      const conversion = typstToLatex(input, isBlock);
+      const richText = await createNativeLatex(plugin, conversion.output, isBlock);
+      const rem = await plugin.rem.findOne(popupState.target.remId);
+      if (rem) {
+        const currentText = rem.text || [];
+        const updatedText = insertRichTextAtRange(currentText, richText, popupState.target.range);
+        await rem.setText(updatedText);
+      } else {
+        await plugin.editor.insertRichText(richText);
+      }
+      await plugin.app.toast(popupState.isEditing ? 'Updated Typst math.' : 'Inserted Typst math.');
+      await closePopup();
+    } catch (conversionError: unknown) {
+      const message = formatError(conversionError);
+      setPending(false);
+      setError(message);
+      await plugin.app.toast(`Typst math failed: ${message}`);
+    }
+  }
+
+  async function toggleTypstPopup(): Promise<void> {
+    if (source.trim() && popupState?.isEditing) {
+      try {
+        await initializeConverter();
+        const conversion = typstToLatex(source.trim(), isBlock);
+        const richText = await createNativeLatex(plugin, conversion.output, isBlock);
+        const rem = await plugin.rem.findOne(popupState.target.remId);
+        if (rem) {
+          const currentText = rem.text || [];
+          const updatedText = insertRichTextAtRange(currentText, richText, popupState.target.range);
+          await rem.setText(updatedText);
+        }
+      } catch (e) {
+        console.warn('[typst-math] toggle save error:', e);
+      }
+    }
+
+    await plugin.storage.setSession('typst_math_data', undefined);
+    await closePopup();
+  }
+
+  useEffect(() => {
+    function onWindowKeyDown(e: globalThis.KeyboardEvent) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        void closePopup();
+      } else if (e.altKey && (e.key === 'm' || e.key === 'M' || e.code === 'KeyM')) {
+        e.preventDefault();
+        void toggleTypstPopup();
+      } else if (e.altKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        void setBlockMode(!isBlock);
+      } else if ((e.altKey || e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        void save();
+      }
+    }
+    window.addEventListener('keydown', onWindowKeyDown);
+    return () => window.removeEventListener('keydown', onWindowKeyDown);
+  }, [plugin, isBlock, source, popupState, pending]);
+
+  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if ((event.altKey || event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      void save();
+    } else if (event.altKey && (event.key === 'm' || event.key === 'M' || event.code === 'KeyM')) {
+      event.preventDefault();
+      void toggleTypstPopup();
+    } else if (event.altKey && (event.key === 'b' || event.key === 'B')) {
+      event.preventDefault();
+      void setBlockMode(!isBlock);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      void closePopup();
+    }
+  }
+
+  useEffect(() => {
+    const isDark =
+      window.matchMedia('(prefers-color-scheme: dark)').matches ||
+      document.documentElement.classList.contains('dark') ||
+      document.body.classList.contains('dark');
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    }
+  }, []);
+
+  async function setBlockMode(nextBlock: boolean): Promise<void> {
+    if (isBlock === nextBlock) return;
+    setIsBlock(nextBlock);
+
+    if (popupState && source.trim()) {
+      try {
+        await initializeConverter();
+        const conversion = typstToLatex(source.trim(), nextBlock);
+        const richText = await createNativeLatex(plugin, conversion.output, nextBlock);
+        const rem = await plugin.rem.findOne(popupState.target.remId);
+        if (rem) {
+          const currentText = rem.text || [];
+          const updatedText = insertRichTextAtRange(currentText, richText, popupState.target.range);
+          await rem.setText(updatedText);
+        }
+      } catch (e) {
+        console.warn('[typst-math] live block toggle error:', e);
+      }
+    }
+  }
+
+  return (
+    <div className="typst-math-popup p-3 rounded-xl shadow-[0_12px_32px_rgba(0,0,0,0.35)] border border-gray-200 dark:border-[#3a3a46] bg-white dark:bg-[#2b2b33] text-gray-900 dark:text-[#f3f3f8] font-sans text-xs select-none transition-colors">
+      <div className="relative min-h-[70px]">
+        {/* Syntax Highlighting Layer */}
+        <pre
+          aria-hidden="true"
+          className="typst-editor-highlight absolute inset-0 pointer-events-none whitespace-pre-wrap break-words font-mono text-[13.5px] leading-relaxed p-1 pr-7 m-0 overflow-hidden font-normal text-gray-900 dark:text-[#f3f3f8] selection:bg-transparent"
+          dangerouslySetInnerHTML={{
+            __html: highlightTypst(source || '') + (source.endsWith('\n') ? ' ' : ''),
+          }}
+        />
+        {/* Interactive Textarea Layer */}
+        <textarea
+          ref={inputRef}
+          value={source}
+          onChange={(event) => {
+            setSource(event.target.value);
+            setError(undefined);
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder="e.g. mat(1, 2; 3, 4)"
+          spellCheck={false}
+          disabled={pending}
+          rows={3}
+          className="typst-editor-input relative w-full resize-y bg-transparent p-1 pr-7 font-mono text-[13.5px] leading-relaxed text-transparent caret-white selection:bg-[#5e79ff]/40 placeholder-gray-400 dark:placeholder-[#7c7c8f] outline-none border-none ring-0 focus:ring-0 focus:outline-none transition-all"
+          aria-label="Typst math source"
+        />
+        <a
+          href="https://typst.app/docs/reference/math/"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Typst Math Documentation"
+          className="absolute top-1 right-1 z-10 w-5 h-5 flex items-center justify-center rounded-full text-gray-400 dark:text-[#9e9eb2] hover:text-gray-200 hover:bg-white/10 text-[11px] font-bold transition-colors cursor-pointer"
+        >
+          ?
+        </a>
+      </div>
+      {error && (
+        <div
+          className="my-1.5 px-1 text-[11px] text-rose-500 dark:text-rose-400 font-medium"
+          role="status"
+        >
+          {error}
+        </div>
+      )}
+      <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-900/[0.06] dark:border-[#353542]">
+        {/* Segmented Control Pill Toggle with Tooltip */}
+        <div className="group relative flex items-center">
+          <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 transition-opacity">
+            <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-[#1a1a24] text-gray-500 dark:text-[#9e9eb2] text-[11px] font-medium shadow-lg border border-gray-200/80 dark:border-white/15 whitespace-nowrap">
+              <kbd className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-[#323242] border border-gray-200/90 dark:border-white/30 font-sans text-[10px] font-medium text-gray-500 dark:text-white shadow-sm">
+                Alt
+              </kbd>
+              <span className="text-gray-400 text-[10px]">+</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-[#323242] border border-gray-200/90 dark:border-white/30 font-sans text-[10px] font-medium text-gray-500 dark:text-white shadow-sm">
+                B
+              </kbd>
+            </div>
+            <div className="w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-white dark:border-t-[#1a1a24]" />
+          </div>
+          <div className="flex items-center p-0.5 rounded-lg bg-black/5 dark:bg-[#202027] border border-gray-200/70 dark:border-[#3a3a48]">
+            <button
+              type="button"
+              onClick={() => void setBlockMode(false)}
+              className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md transition-all cursor-pointer ${
+                !isBlock
+                  ? 'btn-active bg-[#5e79ff] dark:bg-[#5e79ff] text-white dark:text-white shadow-sm font-semibold'
+                  : 'text-gray-500 dark:text-[#9e9eb2] hover:text-gray-800 dark:hover:text-white font-medium'
+              }`}
+            >
+              <span className={`font-mono text-[10px] ${!isBlock ? 'opacity-90' : 'opacity-70'}`}>
+                (x)
+              </span>
+              <span>Inline</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => void setBlockMode(true)}
+              className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md transition-all cursor-pointer ${
+                isBlock
+                  ? 'btn-active bg-[#5e79ff] dark:bg-[#5e79ff] text-white dark:text-white shadow-sm font-semibold'
+                  : 'text-gray-500 dark:text-[#9e9eb2] hover:text-gray-800 dark:hover:text-white font-medium'
+              }`}
+            >
+              <span className={`font-mono text-[10px] ${isBlock ? 'opacity-90' : 'opacity-70'}`}>
+                ∑
+              </span>
+              <span>Block</span>
+            </button>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5">
+          {/* Cancel Button with Tooltip */}
+          <div className="group relative flex items-center">
+            <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 transition-opacity">
+              <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-[#1a1a24] text-gray-500 dark:text-[#9e9eb2] text-[11px] font-medium shadow-lg border border-gray-200/80 dark:border-white/15 whitespace-nowrap">
+                <kbd className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-[#323242] border border-gray-200/90 dark:border-white/30 font-sans text-[10px] font-medium text-gray-500 dark:text-white shadow-sm">
+                  Esc
+                </kbd>
+              </div>
+              <div className="w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-white dark:border-t-[#1a1a24]" />
+            </div>
+            <button
+              type="button"
+              onClick={() => void closePopup()}
+              disabled={pending}
+              className="rounded-lg px-2.5 py-1 text-xs font-medium text-gray-500 dark:text-[#9e9eb2] hover:text-gray-700 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+            >
+              Cancel
+            </button>
+          </div>
+          {/* Done Button with Tooltip */}
+          <div className="group relative flex items-center">
+            <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 transition-opacity">
+              <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-[#1a1a24] text-gray-500 dark:text-[#9e9eb2] text-[11px] font-medium shadow-lg border border-gray-200/80 dark:border-white/15 whitespace-nowrap">
+                <kbd className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-[#323242] border border-gray-200/90 dark:border-white/30 font-sans text-[10px] font-medium text-gray-500 dark:text-white shadow-sm">
+                  Alt
+                </kbd>
+                <span className="text-gray-400 text-[10px]">+</span>
+                <kbd className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-[#323242] border border-gray-200/90 dark:border-white/30 font-sans text-[10px] font-medium text-gray-500 dark:text-white shadow-sm">
+                  ↵
+                </kbd>
+              </div>
+              <div className="w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-white dark:border-t-[#1a1a24]" />
+            </div>
+            <button
+              type="button"
+              onClick={() => void save()}
+              disabled={pending}
+              className="btn-done rounded-lg bg-[#5e79ff] dark:bg-[#5e79ff] hover:bg-[#4d6cf5] dark:hover:bg-[#4d6cf5] active:bg-[#3d5ee8] px-3.5 py-1 text-xs font-semibold text-white dark:text-white shadow transition-all duration-150 flex items-center gap-1 cursor-pointer"
+            >
+              <span>{pending ? (popupState?.isEditing ? 'Saving…' : 'Inserting…') : 'Done'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+renderWidget(TypstMathPopup);

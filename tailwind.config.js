@@ -1,0 +1,55 @@
+module.exports = {
+  content: ['./src/**/*.{vue,js,ts,jsx,tsx}'],
+  darkMode: 'class',
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: [
+          'Inter',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          '"Segoe UI"',
+          'Roboto',
+          'Helvetica',
+          'Arial',
+          'sans-serif',
+          '"Apple Color Emoji"',
+          '"Segoe UI Emoji"',
+          '"Segoe UI Symbol"',
+        ],
+        serif: [
+          'Inter',
+          '-apple-system',
+          'BlinkMacSystemFont',
+          '"Segoe UI"',
+          'Roboto',
+          'Helvetica',
+          'Arial',
+          'sans-serif',
+          '"Apple Color Emoji"',
+          '"Segoe UI Emoji"',
+          '"Segoe UI Symbol"',
+        ],
+        mono: [
+          'SFMono-Regular',
+          'Menlo',
+          'Consolas',
+          '"PT Mono"',
+          '"Liberation Mono"',
+          'Courier',
+          'monospace',
+        ],
+      },
+      colors: {
+        rn: {
+          primary: '#5e79ff',
+          'primary-hover': '#4d6cf5',
+          darkBg: '#232329',
+          darkCard: '#2b2b33',
+          darkBorder: '#3a3a46',
+        },
+      },
+    },
+  },
+  plugins: [],
+};

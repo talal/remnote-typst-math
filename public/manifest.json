@@ -1,0 +1,22 @@
+{
+  "manifestVersion": 1,
+  "id": "typst-math",
+  "name": "Typst Math",
+  "author": "Talal",
+  "repoUrl": "https://github.com/talal/remnote-typst-math",
+  "version": {
+    "major": 1,
+    "minor": 0,
+    "patch": 0
+  },
+  "theme": [],
+  "enableOnMobile": true,
+  "description": "Write Typst math and store it as native RemNote LaTeX.",
+  "requestNative": false,
+  "requiredScopes": [
+    {
+      "type": "All",
+      "level": "ReadCreateModifyDelete"
+    }
+  ]
+}
