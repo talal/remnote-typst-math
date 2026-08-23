@@ -8,9 +8,7 @@ export async function createNativeLatex(
   return plugin.richText.latex(latex, block).value();
 }
 
-export function isNativeLatexElement(
-  value: RichTextInterface[number],
-): value is RichTextLatexInterface {
+export function isNativeLatexElement(value: unknown): value is RichTextLatexInterface {
   return (
     typeof value === 'object' &&
     value !== null &&
