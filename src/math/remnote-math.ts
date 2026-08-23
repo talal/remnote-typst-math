@@ -52,10 +52,10 @@ export function insertRichTextAtRange(
     const elemEnd = currentOffset + elemLen;
     currentOffset = elemEnd;
 
-    if (elemEnd < start) {
+    if (elemEnd <= start) {
       // Entirely before range
       result.push(elem);
-    } else if (elemStart > end) {
+    } else if (elemStart >= end) {
       // Entirely after range
       if (!insertedDone) {
         result.push(...inserted);
@@ -63,7 +63,7 @@ export function insertRichTextAtRange(
       }
       result.push(elem);
     } else {
-      // Overlaps or touches range
+      // Overlaps the half-open range [start, end)
       if (typeof elem === 'string') {
         const keepLeft = elem.slice(0, Math.max(0, start - elemStart));
         const keepRight = elem.slice(Math.max(0, end - elemStart));
@@ -219,7 +219,20 @@ export function findMathElementAtRange(
 
   if (isOnlyMath && mathElements.length === 1) {
     const single = mathElements[0];
-    if (start <= Math.max(single.elem.text.length, single.range.end)) {
+    let expandedStart = 0;
+    for (const elem of richText) {
+      if (elem === single.elem) break;
+      expandedStart += isNativeLatexElement(elem)
+        ? Math.max(1, elem.text.length)
+        : getElementLength(elem);
+    }
+    const expandedEnd = expandedStart + Math.max(1, single.elem.text.length);
+    const overlaps =
+      start === end
+        ? start >= expandedStart && start < expandedEnd
+        : start < expandedEnd && end > expandedStart;
+
+    if (overlaps) {
       return {
         element: single.elem,
         range: single.range,

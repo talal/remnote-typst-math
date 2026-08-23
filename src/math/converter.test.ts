@@ -203,6 +203,21 @@ describe('RichText Insertion & Selection Edge Cases', () => {
     expect(result).toEqual(['start ', sampleLatex, remRef, ' middle ', boldText, ' end']);
   });
 
+  it('inserts after atomic rich text elements at their right boundary', () => {
+    const remRef = { i: 'q' as const, _id: 'rem_123' };
+    const richText = ['before ', remRef, ' after'];
+
+    const result = insertRichTextAtRange(richText, [sampleLatex], { start: 8, end: 8 });
+
+    expect(result).toEqual(['before ', remRef, sampleLatex, ' after']);
+  });
+
+  it('does not select math when the caret is in surrounding whitespace', () => {
+    const richText = [' ', sampleLatex, ' '];
+
+    expect(findMathElementAtRange(richText, { start: 0, end: 0 })).toBeUndefined();
+  });
+
   it('identifies native latex elements accurately', () => {
     expect(isNativeLatexElement(sampleLatex)).toBe(true);
     expect(isNativeLatexElement(blockLatex)).toBe(true);

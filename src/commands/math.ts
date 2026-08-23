@@ -13,9 +13,20 @@ export type TypstMathPopupData = {
   initialError?: string;
   isEditing?: boolean;
   isBlock?: boolean;
+  floatingWidgetId?: string;
 };
 
 export async function openInsertTypstMath(plugin: RNPlugin): Promise<void> {
+  const existingPopupData = await plugin.storage.getSession<TypstMathPopupData>('typst_math_data');
+  if (existingPopupData?.target) {
+    const popupIsOpen = existingPopupData.floatingWidgetId
+      ? await plugin.window.isFloatingWidgetOpen(existingPopupData.floatingWidgetId)
+      : false;
+    if (popupIsOpen) return;
+
+    await plugin.storage.setSession('typst_math_data', undefined);
+  }
+
   const selection = await plugin.editor.getSelection();
 
   if (!selection || selection.type !== SelectionType.Text) {
@@ -24,7 +35,12 @@ export async function openInsertTypstMath(plugin: RNPlugin): Promise<void> {
   }
 
   const rem = await plugin.rem.findOne(selection.remId);
-  const foundMath = rem ? findMathElementAtRange(rem.text, selection.range) : undefined;
+  if (!rem) {
+    await plugin.app.toast('The selected Rem is no longer available.');
+    return;
+  }
+
+  const foundMath = findMathElementAtRange(rem.text || [], selection.range);
 
   let target: MathEditorTarget;
   let initialSource = '';
@@ -68,5 +84,11 @@ export async function openInsertTypstMath(plugin: RNPlugin): Promise<void> {
   };
 
   await plugin.window.closeAllFloatingWidgets();
-  await plugin.window.openFloatingWidget('typst_math_popup', position, undefined, true);
+  const floatingWidgetId = await plugin.window.openFloatingWidget(
+    'typst_math_popup',
+    position,
+    undefined,
+    true,
+  );
+  await plugin.storage.setSession('typst_math_data', { ...popupData, floatingWidgetId });
 }

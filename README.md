@@ -41,7 +41,7 @@ This plugin bridges the two worlds:
 <!-- prettier-ignore-start -->
 | Shortcut | Action |
 | :--- | :--- |
-| <kbd>Alt</kbd> + <kbd>M</kbd> | Toggle Typst math editor open / closed |
+| <kbd>Alt</kbd> + <kbd>M</kbd> | Toggle Typst math editor open/closed (if already open, the editor will save before closing) |
 | <kbd>Alt</kbd> + <kbd>B</kbd> | Toggle between inline and block math modes |
 | <kbd>Alt</kbd> + <kbd>Enter</kbd> (or <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + <kbd>Enter</kbd>) | Done (Save & insert/update math into Rem) |
 | <kbd>Esc</kbd> | Cancel (Dismiss editor without saving) |

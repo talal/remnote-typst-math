@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { renderWidget, usePlugin, WidgetLocation } from '@remnote/plugin-sdk';
-import type { KeyboardEvent } from 'react';
 import '../style.css';
 import { ConversionError, initializeConverter, typstToLatex } from '../math/converter';
 import { createNativeLatex, insertRichTextAtRange } from '../math/remnote-math';
@@ -57,26 +56,16 @@ function TypstMathPopup() {
   const [isBlock, setIsBlock] = useState(false);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
+  const saveInFlight = useRef(false);
+  const modeSwitchInFlight = useRef(false);
 
   useEffect(() => {
     let active = true;
 
     async function loadData() {
       try {
-        const sessionData = await plugin.storage.getSession<TypstMathPopupData>('typst_math_data');
-        let state: PopupState | undefined;
-        if (sessionData && sessionData.target) {
-          state = {
-            target: sessionData.target,
-            initialSource: sessionData.initialSource || '',
-            initialError: sessionData.initialError,
-            isEditing: Boolean(sessionData.isEditing),
-            isBlock: Boolean(sessionData.isBlock),
-          };
-        } else {
-          const context = await plugin.widget.getWidgetContext<WidgetLocation.Popup>();
-          state = readPopupState(context.contextData);
-        }
+        const sessionData = await plugin.storage.getSession<unknown>('typst_math_data');
+        const state = readPopupState(sessionData);
 
         if (!active) return;
 
@@ -111,18 +100,55 @@ function TypstMathPopup() {
 
   async function closePopup(): Promise<void> {
     try {
-      await plugin.window.closeAllFloatingWidgets();
+      const context = await plugin.widget.getWidgetContext<WidgetLocation.FloatingWidget>();
+      await plugin.window.closeFloatingWidget(context.floatingWidgetId);
     } catch {
-      await plugin.widget.closePopup(true);
+      await plugin.window.closeAllFloatingWidgets();
     }
   }
 
+  async function notify(message: string): Promise<void> {
+    try {
+      await plugin.app.toast(message);
+    } catch {
+      // A toast failure must not turn a completed Rem update into a retryable save.
+    }
+  }
+
+  async function dismissPopup(): Promise<void> {
+    await plugin.storage.setSession('typst_math_data', undefined);
+    await closePopup();
+  }
+
+  async function dismissAllFloatingWidgets(): Promise<void> {
+    await plugin.storage.setSession('typst_math_data', undefined);
+    await plugin.window.closeAllFloatingWidgets();
+  }
+
+  async function updateMath(
+    input: string,
+    block: boolean,
+    target: MathEditorTarget,
+  ): Promise<void> {
+    await initializeConverter();
+    const conversion = typstToLatex(input, block);
+    const richText = await createNativeLatex(plugin, conversion.output, block);
+    const rem = await plugin.rem.findOne(target.remId);
+    if (!rem) {
+      throw new Error('The target Rem is no longer available. Reopen the editor and try again.');
+    }
+
+    const currentText = rem.text || [];
+    const updatedText = insertRichTextAtRange(currentText, richText, target.range);
+    await rem.setText(updatedText);
+  }
+
   async function save(): Promise<void> {
-    if (pending) return;
+    if (saveInFlight.current || modeSwitchInFlight.current) return;
     if (!popupState) {
       const message = 'The editor target is still loading. Try again.';
       setError(message);
-      await plugin.app.toast(message);
+      await notify(message);
       return;
     }
 
@@ -132,57 +158,56 @@ function TypstMathPopup() {
       return;
     }
 
+    saveInFlight.current = true;
     setPending(true);
     setError(undefined);
+    let committed = false;
 
     try {
-      await initializeConverter();
-      const conversion = typstToLatex(input, isBlock);
-      const richText = await createNativeLatex(plugin, conversion.output, isBlock);
-      const rem = await plugin.rem.findOne(popupState.target.remId);
-      if (rem) {
-        const currentText = rem.text || [];
-        const updatedText = insertRichTextAtRange(currentText, richText, popupState.target.range);
-        await rem.setText(updatedText);
-      } else {
-        await plugin.editor.insertRichText(richText);
-      }
-      await plugin.app.toast(popupState.isEditing ? 'Updated Typst math.' : 'Inserted Typst math.');
-      await closePopup();
-    } catch (conversionError: unknown) {
-      const message = formatError(conversionError);
-      setPending(false);
+      await updateMath(input, isBlock, popupState.target);
+      committed = true;
+      await dismissPopup();
+    } catch (saveError: unknown) {
+      const message = committed ? 'Saved, but the editor could not close.' : formatError(saveError);
       setError(message);
-      await plugin.app.toast(`Typst math failed: ${message}`);
+      await notify(committed ? message : `Typst math failed: ${message}`);
+    } finally {
+      saveInFlight.current = false;
+      setPending(false);
     }
   }
 
   async function toggleTypstPopup(): Promise<void> {
-    if (source.trim() && popupState?.isEditing) {
-      try {
-        await initializeConverter();
-        const conversion = typstToLatex(source.trim(), isBlock);
-        const richText = await createNativeLatex(plugin, conversion.output, isBlock);
-        const rem = await plugin.rem.findOne(popupState.target.remId);
-        if (rem) {
-          const currentText = rem.text || [];
-          const updatedText = insertRichTextAtRange(currentText, richText, popupState.target.range);
-          await rem.setText(updatedText);
-        }
-      } catch (e) {
-        console.warn('[typst-math] toggle save error:', e);
-      }
+    if (saveInFlight.current || modeSwitchInFlight.current) return;
+
+    const input = source.trim();
+    if (!popupState?.isEditing || !input) {
+      await dismissAllFloatingWidgets();
+      return;
     }
 
-    await plugin.storage.setSession('typst_math_data', undefined);
-    await closePopup();
+    saveInFlight.current = true;
+    setPending(true);
+    setError(undefined);
+
+    try {
+      await updateMath(input, isBlock, popupState.target);
+      await dismissAllFloatingWidgets();
+    } catch (toggleError: unknown) {
+      const message = formatError(toggleError);
+      setError(message);
+      await notify(`Typst math failed: ${message}`);
+    } finally {
+      saveInFlight.current = false;
+      setPending(false);
+    }
   }
 
   useEffect(() => {
     function onWindowKeyDown(e: globalThis.KeyboardEvent) {
       if (e.key === 'Escape') {
         e.preventDefault();
-        void closePopup();
+        void dismissPopup();
       } else if (e.altKey && (e.key === 'm' || e.key === 'M' || e.code === 'KeyM')) {
         e.preventDefault();
         void toggleTypstPopup();
@@ -196,23 +221,7 @@ function TypstMathPopup() {
     }
     window.addEventListener('keydown', onWindowKeyDown);
     return () => window.removeEventListener('keydown', onWindowKeyDown);
-  }, [plugin, isBlock, source, popupState, pending]);
-
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
-    if ((event.altKey || event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-      event.preventDefault();
-      void save();
-    } else if (event.altKey && (event.key === 'm' || event.key === 'M' || event.code === 'KeyM')) {
-      event.preventDefault();
-      void toggleTypstPopup();
-    } else if (event.altKey && (event.key === 'b' || event.key === 'B')) {
-      event.preventDefault();
-      void setBlockMode(!isBlock);
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      void closePopup();
-    }
-  }
+  }, [plugin, isBlock, source, popupState]);
 
   useEffect(() => {
     let isDark =
@@ -242,23 +251,23 @@ function TypstMathPopup() {
   }, []);
 
   async function setBlockMode(nextBlock: boolean): Promise<void> {
-    if (isBlock === nextBlock) return;
+    if (isBlock === nextBlock || saveInFlight.current || modeSwitchInFlight.current) return;
+
     setIsBlock(nextBlock);
 
-    if (popupState && source.trim()) {
-      try {
-        await initializeConverter();
-        const conversion = typstToLatex(source.trim(), nextBlock);
-        const richText = await createNativeLatex(plugin, conversion.output, nextBlock);
-        const rem = await plugin.rem.findOne(popupState.target.remId);
-        if (rem) {
-          const currentText = rem.text || [];
-          const updatedText = insertRichTextAtRange(currentText, richText, popupState.target.range);
-          await rem.setText(updatedText);
-        }
-      } catch (e) {
-        console.warn('[typst-math] live block toggle error:', e);
-      }
+    if (!popupState?.isEditing || !source.trim()) return;
+
+    modeSwitchInFlight.current = true;
+    try {
+      await updateMath(source.trim(), nextBlock, popupState.target);
+      setError(undefined);
+    } catch (modeError: unknown) {
+      setIsBlock(!nextBlock);
+      const message = formatError(modeError);
+      setError(message);
+      await notify(`Typst math failed: ${message}`);
+    } finally {
+      modeSwitchInFlight.current = false;
     }
   }
 
@@ -281,7 +290,6 @@ function TypstMathPopup() {
             setSource(event.target.value);
             setError(undefined);
           }}
-          onKeyDown={handleKeyDown}
           placeholder="e.g. mat(1, 2; 3, 4)"
           spellCheck={false}
           disabled={pending}
@@ -366,7 +374,7 @@ function TypstMathPopup() {
             </div>
             <button
               type="button"
-              onClick={() => void closePopup()}
+              onClick={() => void dismissPopup()}
               disabled={pending}
               className="rounded-lg px-2.5 py-1 text-xs font-medium text-gray-500 dark:text-[#9e9eb2] hover:text-gray-700 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
             >
