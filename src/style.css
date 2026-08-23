@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Floating widgets are iframe-backed; match the canvas to the rounded popup. */
+html,
+body {
+  background: #ffffff !important;
+}
+
+html.dark,
+body.dark,
+html[data-theme='dark'],
+body[data-theme='dark'] {
+  background: #2b2b33 !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  html,
+  body {
+    background: #2b2b33 !important;
+  }
+}
+
 /* Prism Typst Syntax Highlighting */
 .token.comment {
   color: #6c6c7b;
