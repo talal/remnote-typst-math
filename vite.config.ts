@@ -1,6 +1,13 @@
 import { defineConfig } from 'vite-plus';
 
-const commonIgnorePatterns = ['.agents/**', '.github/**', 'dist/**', 'public/wasm/**'];
+const commonIgnorePatterns = [
+  '.agents/**',
+  '.github/**',
+  'dist/**',
+  'public/wasm/**',
+  'PluginZip/**',
+  'PluginZip.zip',
+];
 
 export default defineConfig({
   test: {

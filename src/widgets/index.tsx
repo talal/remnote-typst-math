@@ -1,7 +1,6 @@
 import { declareIndexPlugin, WidgetLocation } from '@remnote/plugin-sdk';
 import type { ReactRNPlugin } from '@remnote/plugin-sdk';
 import '../style.css';
-import '../index.css';
 import { openInsertTypstMath } from '../commands/math';
 
 async function onActivate(plugin: ReactRNPlugin) {

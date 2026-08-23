@@ -215,12 +215,29 @@ function TypstMathPopup() {
   }
 
   useEffect(() => {
-    const isDark =
+    let isDark =
       window.matchMedia('(prefers-color-scheme: dark)').matches ||
       document.documentElement.classList.contains('dark') ||
-      document.body.classList.contains('dark');
+      document.body.classList.contains('dark') ||
+      document.documentElement.getAttribute('data-theme') === 'dark';
+
+    if (!isDark) {
+      try {
+        if (
+          window.parent?.document?.documentElement?.classList?.contains('dark') ||
+          window.parent?.document?.body?.classList?.contains('dark') ||
+          window.parent?.document?.documentElement?.getAttribute('data-theme') === 'dark'
+        ) {
+          isDark = true;
+        }
+      } catch {
+        // Cross-origin iframe fallback
+      }
+    }
+
     if (isDark) {
       document.documentElement.classList.add('dark');
+      document.body.classList.add('dark');
     }
   }, []);
 
@@ -251,7 +268,7 @@ function TypstMathPopup() {
         {/* Syntax Highlighting Layer */}
         <pre
           aria-hidden="true"
-          className="typst-editor-highlight absolute inset-0 pointer-events-none whitespace-pre-wrap break-words font-mono text-[13.5px] leading-relaxed p-1 pr-7 m-0 overflow-hidden font-normal text-gray-900 dark:text-[#f3f3f8] selection:bg-transparent"
+          className="typst-editor-highlight text-gray-900 dark:text-[#f3f3f8]"
           dangerouslySetInnerHTML={{
             __html: highlightTypst(source || '') + (source.endsWith('\n') ? ' ' : ''),
           }}
@@ -269,7 +286,7 @@ function TypstMathPopup() {
           spellCheck={false}
           disabled={pending}
           rows={3}
-          className="typst-editor-input relative w-full resize-y bg-transparent p-1 pr-7 font-mono text-[13.5px] leading-relaxed text-transparent caret-white selection:bg-[#5e79ff]/40 placeholder-gray-400 dark:placeholder-[#7c7c8f] outline-none border-none ring-0 focus:ring-0 focus:outline-none transition-all"
+          className="typst-editor-input"
           aria-label="Typst math source"
         />
         <a
@@ -295,11 +312,11 @@ function TypstMathPopup() {
         <div className="group relative flex items-center">
           <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 transition-opacity">
             <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-[#1a1a24] text-gray-500 dark:text-[#9e9eb2] text-[11px] font-medium shadow-lg border border-gray-200/80 dark:border-white/15 whitespace-nowrap">
-              <kbd className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-[#323242] border border-gray-200/90 dark:border-white/30 font-sans text-[10px] font-medium text-gray-500 dark:text-white shadow-sm">
+              <kbd className="inline-block px-1.5 py-0.5 rounded font-sans text-[10px] font-medium leading-none bg-black/5 dark:bg-[#323242] text-gray-500 dark:text-[#f3f3f8] border border-gray-200/90 dark:border-white/30 shadow-sm">
                 Alt
               </kbd>
               <span className="text-gray-400 text-[10px]">+</span>
-              <kbd className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-[#323242] border border-gray-200/90 dark:border-white/30 font-sans text-[10px] font-medium text-gray-500 dark:text-white shadow-sm">
+              <kbd className="inline-block px-1.5 py-0.5 rounded font-sans text-[10px] font-medium leading-none bg-black/5 dark:bg-[#323242] text-gray-500 dark:text-[#f3f3f8] border border-gray-200/90 dark:border-white/30 shadow-sm">
                 B
               </kbd>
             </div>
@@ -311,7 +328,7 @@ function TypstMathPopup() {
               onClick={() => void setBlockMode(false)}
               className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md transition-all cursor-pointer ${
                 !isBlock
-                  ? 'btn-active bg-[#5e79ff] dark:bg-[#5e79ff] text-white dark:text-white shadow-sm font-semibold'
+                  ? 'bg-[#5e79ff] text-white shadow-sm font-semibold'
                   : 'text-gray-500 dark:text-[#9e9eb2] hover:text-gray-800 dark:hover:text-white font-medium'
               }`}
             >
@@ -325,7 +342,7 @@ function TypstMathPopup() {
               onClick={() => void setBlockMode(true)}
               className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md transition-all cursor-pointer ${
                 isBlock
-                  ? 'btn-active bg-[#5e79ff] dark:bg-[#5e79ff] text-white dark:text-white shadow-sm font-semibold'
+                  ? 'bg-[#5e79ff] text-white shadow-sm font-semibold'
                   : 'text-gray-500 dark:text-[#9e9eb2] hover:text-gray-800 dark:hover:text-white font-medium'
               }`}
             >
@@ -341,7 +358,7 @@ function TypstMathPopup() {
           <div className="group relative flex items-center">
             <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 transition-opacity">
               <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-[#1a1a24] text-gray-500 dark:text-[#9e9eb2] text-[11px] font-medium shadow-lg border border-gray-200/80 dark:border-white/15 whitespace-nowrap">
-                <kbd className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-[#323242] border border-gray-200/90 dark:border-white/30 font-sans text-[10px] font-medium text-gray-500 dark:text-white shadow-sm">
+                <kbd className="inline-block px-1.5 py-0.5 rounded font-sans text-[10px] font-medium leading-none bg-black/5 dark:bg-[#323242] text-gray-500 dark:text-[#f3f3f8] border border-gray-200/90 dark:border-white/30 shadow-sm">
                   Esc
                 </kbd>
               </div>
@@ -360,11 +377,11 @@ function TypstMathPopup() {
           <div className="group relative flex items-center">
             <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 transition-opacity">
               <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-[#1a1a24] text-gray-500 dark:text-[#9e9eb2] text-[11px] font-medium shadow-lg border border-gray-200/80 dark:border-white/15 whitespace-nowrap">
-                <kbd className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-[#323242] border border-gray-200/90 dark:border-white/30 font-sans text-[10px] font-medium text-gray-500 dark:text-white shadow-sm">
+                <kbd className="inline-block px-1.5 py-0.5 rounded font-sans text-[10px] font-medium leading-none bg-black/5 dark:bg-[#323242] text-gray-500 dark:text-[#f3f3f8] border border-gray-200/90 dark:border-white/30 shadow-sm">
                   Alt
                 </kbd>
                 <span className="text-gray-400 text-[10px]">+</span>
-                <kbd className="px-1.5 py-0.5 rounded bg-black/5 dark:bg-[#323242] border border-gray-200/90 dark:border-white/30 font-sans text-[10px] font-medium text-gray-500 dark:text-white shadow-sm">
+                <kbd className="inline-block px-1.5 py-0.5 rounded font-sans text-[10px] font-medium leading-none bg-black/5 dark:bg-[#323242] text-gray-500 dark:text-[#f3f3f8] border border-gray-200/90 dark:border-white/30 shadow-sm">
                   ↵
                 </kbd>
               </div>
@@ -374,7 +391,7 @@ function TypstMathPopup() {
               type="button"
               onClick={() => void save()}
               disabled={pending}
-              className="btn-done rounded-lg bg-[#5e79ff] dark:bg-[#5e79ff] hover:bg-[#4d6cf5] dark:hover:bg-[#4d6cf5] active:bg-[#3d5ee8] px-3.5 py-1 text-xs font-semibold text-white dark:text-white shadow transition-all duration-150 flex items-center gap-1 cursor-pointer"
+              className="rounded-lg bg-[#5e79ff] hover:bg-[#4d6cf5] active:bg-[#3d5ee8] px-3.5 py-1 text-xs font-semibold text-white shadow transition-all duration-150 flex items-center gap-1 cursor-pointer disabled:opacity-50"
             >
               <span>{pending ? (popupState?.isEditing ? 'Saving…' : 'Inserting…') : 'Done'}</span>
             </button>
