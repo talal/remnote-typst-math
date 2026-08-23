@@ -34,23 +34,27 @@ Update Rem at target range via rem.setText()
   - `commands/math.ts`: Target editor & selection capture, math element detection, command definitions.
   - `math/converter.ts`: Tylax WebAssembly module loader, error handling, and conversion functions (`typstToLatex`, `latexToTypst`).
   - `math/remnote-math.ts`: RichText helpers, native LaTeX element detection, `findMathElementAtRange`, and `insertRichTextAtRange` algorithm.
+  - `math/typst-grammar.ts`: Prism.js syntax highlighting grammar and tokenizer for Typst math code.
   - `widgets/index.tsx`: Main plugin entrypoint (registers commands, widgets, and background listeners).
   - `widgets/typst_math_popup.tsx`: Caret-anchored floating widget for typing/editing Typst math expressions.
+  - `style.css`: Core Tailwind directives, Shadow DOM resets, and Prism syntax highlighting styling.
+  - `env.d.ts`: Ambient TypeScript declarations for CSS side-effect imports.
 - `public/`
   - `manifest.json`: RemNote plugin manifest with permissions and metadata.
   - `wasm/`: Pre-compiled Tylax WASM binary (`tylax_bg.wasm`) and JS binding (`tylax.js`).
-- `tests/` or `src/math/*.test.ts`: Vitest test suites.
+- `vite.config.ts`: Vite+ toolchain configuration (Vitest, Oxlint, Oxfmt, type-aware checking).
+- `src/math/converter.test.ts`: Vitest test suites (WASM conversions, RichText manipulation, syntax highlighting).
 
 ---
 
 ## Development Workflow & Commands
 
-- **Run Checks (Format, Lint, Types)**: `npm run check` (Runs `vp check` with Oxlint, Oxfmt & TS)
+- **Run Quality Gate (Format, Lint, Types)**: `npm run check` (Runs `vp check` with Oxlint, Oxfmt & TS Go type checker)
 - **Run Tests**: `npm test` (Runs `vp test` via Vitest)
-- **Code Formatting**: `npm run fmt` (`vp fmt`)
-- **Linting**: `npm run lint` (`vp lint`)
+- **Code Formatting**: `npm run fmt` (`vp fmt` via Oxfmt)
+- **Linting**: `npm run lint` (`vp lint` via Oxlint)
+- **Type Checking Only**: `npm run check-types` (`vp check --no-fmt --no-lint`)
 - **Start Dev Server**: `npm run dev` (Runs webpack-dev-server on port 8080 with HMR)
-- **Type Checking**: `npm run check-types` (`tsc --noEmit`)
 - **Production Build & Zip**: `npm run build` (Validates plugin manifest, bundles with Webpack, and packages `PluginZip.zip`)
 
 ---
@@ -80,3 +84,9 @@ Update Rem at target range via rem.setText()
    - To inspect or interact with the running browser session:
      - `playwright-cli attach --cdp=http://localhost:9222`
      - `chrome-devtools list_pages` / `chrome-devtools list_console_messages`
+
+6. **Floating Widget Shortcuts**:
+   - `Alt+M`: Toggle Typst editor open/closed (saving before close if editing)
+   - `Alt+B`: Toggle between inline `(x)` and block `∑` math modes
+   - `Alt+Enter` (or `Ctrl/Cmd+Enter`): Save & insert/update math into Rem
+   - `Esc`: Dismiss editor without saving
