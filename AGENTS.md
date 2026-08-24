@@ -43,7 +43,7 @@ Update Rem at target range via rem.setText()
   - `manifest.json`: RemNote plugin manifest with permissions and metadata.
   - `wasm/`: Pre-compiled Tylax WASM binary (`tylax_bg.wasm`) and JS binding (`tylax.js`).
 - `vite.config.ts`: Vite+ toolchain configuration (Vitest, Oxlint, Oxfmt, type-aware checking).
-- `src/math/converter.test.ts`: Vitest test suites (WASM conversions, RichText manipulation, syntax highlighting).
+- `src/math/converter.test.ts`: Vitest suites for WASM conversions, deterministic bidirectional fuzzing, RichText manipulation, and syntax highlighting.
 
 ---
 
@@ -74,7 +74,9 @@ Update Rem at target range via rem.setText()
 
 3. **Bidirectional WASM Translation**:
    - Clean, standard LaTeX is stored natively in RemNote without auxiliary comments or metadata.
-   - When editing any math element, Tylax WASM's `latexToTypst` parses the LaTeX on the fly and pre-populates the floating editor with clean Typst math.
+   - UI code must use the converter wrappers, not raw Tylax calls. `latexToTypst` repairs known Tylax output lossiness: `#text[...]` becomes a Typst string, LaTeX control/non-breaking spaces become `space`/`space.nobreak`, known relation classes become canonical operators, and `#underline[...]` becomes `underline(...)`.
+   - When editing any math element, the wrapper parses the stored LaTeX on the fly and pre-populates the floating editor with normalized Typst source.
+   - Tylax is not universally idempotent for every supported construct; add a focused regression before introducing another normalization.
 
 4. **Native LaTeX Schema**:
    - Inline math: `{ i: "x", text: "\\sum_{i=1}^n i", block: false }`
