@@ -88,7 +88,7 @@ Update Rem at target range via rem.setText()
      - `chrome-devtools list_pages` / `chrome-devtools list_console_messages`
 
 6. **Floating Widget Shortcuts**:
-   - `Alt+M`: Toggle Typst editor open/closed (saving before close if editing)
+   - `Alt+M`: Open the Typst editor; repeated presses keep the existing popup open
    - `Alt+B`: Toggle between inline `(x)` and block `∑` math modes
-   - `Alt+Enter` (or `Ctrl/Cmd+Enter`): Save & insert/update math into Rem
+   - `Enter`: Save & insert/update math into Rem
    - `Esc`: Dismiss editor without saving

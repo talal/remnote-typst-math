@@ -27,7 +27,10 @@ export async function openInsertTypstMath(plugin: RNPlugin): Promise<void> {
     await plugin.storage.setSession('typst_math_data', undefined);
   }
 
-  const selection = await plugin.editor.getSelection();
+  const [selection, initialCaret] = await Promise.all([
+    plugin.editor.getSelection(),
+    plugin.editor.getCaretPosition(),
+  ]);
 
   if (!selection || selection.type !== SelectionType.Text) {
     await plugin.app.toast('Focus an editor before inserting Typst math.');
@@ -75,20 +78,32 @@ export async function openInsertTypstMath(plugin: RNPlugin): Promise<void> {
     isBlock,
   };
 
-  await plugin.storage.setSession('typst_math_data', popupData);
+  let anchorCaret = initialCaret;
+  if (foundMath) {
+    // A programmatic text update dismisses RemNote's native LaTeX sub-editor before
+    // the floating Typst editor takes focus. Preserve the stored RichText unchanged.
+    await rem.setText([...(rem.text || [])]);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    anchorCaret = (await plugin.editor.getCaretPosition()) ?? initialCaret;
+  }
 
-  const caret = await plugin.editor.getCaretPosition();
   const position = {
-    top: caret ? caret.bottom + 6 : 100,
-    left: caret ? Math.max(16, caret.left - 10) : 100,
+    top: anchorCaret ? anchorCaret.bottom + 6 : 100,
+    left: anchorCaret ? Math.max(16, anchorCaret.left - 10) : 100,
   };
 
-  await plugin.window.closeAllFloatingWidgets();
+  await Promise.all([
+    plugin.storage.setSession('typst_math_data', popupData),
+    plugin.window.closeAllFloatingWidgets(),
+  ]);
+
   const floatingWidgetId = await plugin.window.openFloatingWidget(
     'typst_math_popup',
     position,
     undefined,
     true,
   );
-  await plugin.storage.setSession('typst_math_data', { ...popupData, floatingWidgetId });
+  if (floatingWidgetId) {
+    await plugin.storage.setSession('typst_math_data', { ...popupData, floatingWidgetId });
+  }
 }

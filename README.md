@@ -21,30 +21,30 @@ This plugin bridges the two worlds:
 
 1. Place your cursor anywhere in a Rem.
 2. Press <kbd>Alt</kbd> + <kbd>M</kbd> (or use the slash command `/typst`).
-3. Type your formula using Typst syntax in the editor.
-4. Press <kbd>Alt</kbd> + <kbd>Enter</kbd> (or <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + <kbd>Enter</kbd> or click **Done**) to insert.
+3. Type your formula using Typst syntax in the popup.
+4. Press <kbd>Enter</kbd> or click **Done** to insert it.
 
 ### 2. Editing Existing Math
 
 1. Move your cursor onto (or select) any existing math equation in a Rem.
 2. Press <kbd>Alt</kbd> + <kbd>M</kbd>.
-3. The popup will open pre-filled with the converted Typst math source.
-4. Edit the formula and press <kbd>Alt</kbd> + <kbd>Enter</kbd> (or <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + <kbd>Enter</kbd> or click **Done**) to save.
+3. The popup opens pre-filled with the converted Typst math source.
+4. Edit the formula and press <kbd>Enter</kbd> or click **Done** to save.
 
 ### 3. Toggling Between Inline and Block Mode
 
-- Click the **(x) Inline** or **∑ Block** toggles in the Typst editor popup, or press <kbd>Alt</kbd> + <kbd>B</kbd> to toggle between them.
+- Click the **(x) Inline** or **∑ Block** buttons or press <kbd>Alt</kbd> + <kbd>B</kbd>.
 
 ## Keyboard Shortcuts
 
 <!-- dprint-ignore-start -->
 <!-- prettier-ignore-start -->
 | Shortcut | Action |
-| :--- | :--- |
-| <kbd>Alt</kbd> + <kbd>M</kbd> | Toggle Typst math editor open/closed (if already open, the editor will save before closing) |
+| <kbd>Alt</kbd> + <kbd>M</kbd> | Open the Typst math popup; if already open, keep it open and focus the editor |
 | <kbd>Alt</kbd> + <kbd>B</kbd> | Toggle between inline and block math modes |
-| <kbd>Alt</kbd> + <kbd>Enter</kbd> (or <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + <kbd>Enter</kbd>) | Done (Save & insert/update math into Rem) |
-| <kbd>Esc</kbd> | Cancel (Dismiss editor without saving) |
+| <kbd>Enter</kbd> | Save and then close the popup |
+| <kbd>Shift</kbd> + <kbd>Enter</kbd> | Insert a new line |
+| <kbd>Esc</kbd> | Cancel and dismiss the popup without saving |
 <!-- prettier-ignore-end -->
 <!-- dprint-ignore-end -->
 

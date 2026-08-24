@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Common Changelog](https://common-changelog.org/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.0.4 - 2026-08-25
+
+### Changed
+
+- Use Enter key for save instead of Alt+Enter. Use Shift+Enter for newlines
+
+### Fixed
+
+- Align popup opening, dismissal, and keyboard shortcuts with RemNote's native LaTeX math editor
+- Improve light and dark mode syntax highlighting contrast
+
 ## 1.0.3 - 2026-08-24
 
 ### Fixed

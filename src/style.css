@@ -2,26 +2,21 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Floating widgets are iframe-backed; match the canvas to the rounded popup. */
 html,
 body {
-  background: #ffffff !important;
+  margin: 0;
+  color: var(--rn-clr-content-primary, CanvasText);
+  font-family: var(--rn-font-family);
+  padding: 1px 0 2px;
+  background: var(--rn-clr-background-primary, #ffffff) !important;
 }
 
 html.dark,
 body.dark,
 html[data-theme='dark'],
 body[data-theme='dark'] {
-  background: #2b2b33 !important;
+  background: var(--rn-clr-background-secondary, #2b2b33) !important;
 }
-
-@media (prefers-color-scheme: dark) {
-  html,
-  body {
-    background: #2b2b33 !important;
-  }
-}
-
 /* Prism Typst Syntax Highlighting */
 .token.comment {
   color: #6c6c7b;
@@ -68,6 +63,55 @@ body[data-theme='dark'] {
   color: #a6a6b8;
 }
 
+/* Shared popup interaction primitives. */
+.typst-math-popup {
+  font-family: var(--rn-font-family);
+  background-color: var(--rn-clr-background-primary);
+  border: 1px solid var(--rn-clr-background-secondary);
+}
+
+:is(.dark, [data-theme='dark'], body.dark) .typst-math-popup,
+.dark.typst-math-popup {
+  background-color: var(--rn-clr-background-secondary);
+  border-color: var(--rn-clr-background-primary);
+}
+
+.typst-math-popup button.rn-clr-background-accent,
+.typst-math-popup .rn-clr-background-accent,
+.typst-math-popup button.rn-clr-background-accent *,
+.typst-math-popup .rn-clr-background-accent * {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
+.typst-popup-hover {
+  transition:
+    background-color 150ms ease,
+    color 150ms ease;
+}
+
+.typst-popup-hover:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--rn-clr-content-primary, CanvasText) 8%, transparent);
+}
+
+.typst-popup-muted:hover:not(:disabled) {
+  color: var(--rn-clr-content-primary, CanvasText);
+}
+
+.typst-popup-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.typst-popup-hover:focus-visible {
+  outline: 2px solid var(--rn-clr-border-accent, Highlight);
+  outline-offset: 1px;
+}
+
+.typst-popup-tooltip-arrow {
+  border-top-color: var(--rn-clr-background-elevation-30, Canvas);
+}
+
 /* Monospace Editor & Cursor Styles */
 .typst-editor-input,
 .typst-editor-highlight {
@@ -98,22 +142,21 @@ body[data-theme='dark'] {
   width: 100%;
   color: transparent !important;
   -webkit-text-fill-color: transparent !important;
-  caret-color: #000000 !important;
+  caret-color: var(--rn-clr-content-primary, CanvasText) !important;
   background: transparent !important;
   resize: vertical;
   outline: none !important;
   box-shadow: none !important;
 }
 
-:is(.dark, [data-theme='dark'], :host-context(.dark)) .typst-editor-input {
-  caret-color: #ffffff !important;
-}
-
 .typst-editor-input::placeholder {
-  color: #7c7c8f !important;
-  -webkit-text-fill-color: #7c7c8f !important;
+  color: var(--rn-clr-content-tertiary, GrayText) !important;
+  -webkit-text-fill-color: var(--rn-clr-content-tertiary, GrayText) !important;
 }
 
 .typst-editor-input::selection {
-  background: rgba(94, 121, 255, 0.35) !important;
+  background: var(
+    --rn-clr-background-light-accent,
+    var(--rn-clr-background-accent, Highlight)
+  ) !important;
 }

@@ -2,7 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { renderWidget, usePlugin, WidgetLocation } from '@remnote/plugin-sdk';
 import '../style.css';
 import { ConversionError, initializeConverter, typstToLatex } from '../math/converter';
-import { createNativeLatex, insertRichTextAtRange } from '../math/remnote-math';
+import {
+  createNativeLatex,
+  insertRichTextAtRange,
+  setMathBlockAtRange,
+} from '../math/remnote-math';
 import { highlightTypst } from '../math/typst-grammar';
 import { type MathEditorTarget, type TypstMathPopupData } from '../commands/math';
 
@@ -120,11 +124,6 @@ function TypstMathPopup() {
     await closePopup();
   }
 
-  async function dismissAllFloatingWidgets(): Promise<void> {
-    await plugin.storage.setSession('typst_math_data', undefined);
-    await plugin.window.closeAllFloatingWidgets();
-  }
-
   async function updateMath(
     input: string,
     block: boolean,
@@ -177,32 +176,6 @@ function TypstMathPopup() {
     }
   }
 
-  async function toggleTypstPopup(): Promise<void> {
-    if (saveInFlight.current || modeSwitchInFlight.current) return;
-
-    const input = source.trim();
-    if (!popupState?.isEditing || !input) {
-      await dismissAllFloatingWidgets();
-      return;
-    }
-
-    saveInFlight.current = true;
-    setPending(true);
-    setError(undefined);
-
-    try {
-      await updateMath(input, isBlock, popupState.target);
-      await dismissAllFloatingWidgets();
-    } catch (toggleError: unknown) {
-      const message = formatError(toggleError);
-      setError(message);
-      await notify(`Typst math failed: ${message}`);
-    } finally {
-      saveInFlight.current = false;
-      setPending(false);
-    }
-  }
-
   useEffect(() => {
     function onWindowKeyDown(e: globalThis.KeyboardEvent) {
       if (e.key === 'Escape') {
@@ -210,11 +183,11 @@ function TypstMathPopup() {
         void dismissPopup();
       } else if (e.altKey && (e.key === 'm' || e.key === 'M' || e.code === 'KeyM')) {
         e.preventDefault();
-        void toggleTypstPopup();
+        inputRef.current?.focus();
       } else if (e.altKey && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault();
         void setBlockMode(!isBlock);
-      } else if ((e.altKey || e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
         void save();
       }
@@ -254,12 +227,23 @@ function TypstMathPopup() {
     if (isBlock === nextBlock || saveInFlight.current || modeSwitchInFlight.current) return;
 
     setIsBlock(nextBlock);
-
-    if (!popupState?.isEditing || !source.trim()) return;
+    if (!popupState?.isEditing) return;
 
     modeSwitchInFlight.current = true;
     try {
-      await updateMath(source.trim(), nextBlock, popupState.target);
+      const rem = await plugin.rem.findOne(popupState.target.remId);
+      if (!rem) {
+        throw new Error('The target Rem is no longer available. Reopen the editor and try again.');
+      }
+
+      const updatedText = setMathBlockAtRange(rem.text || [], popupState.target.range, nextBlock);
+      if (!updatedText) {
+        throw new Error(
+          'The target math element is no longer available. Reopen the editor and try again.',
+        );
+      }
+
+      await rem.setText(updatedText);
       setError(undefined);
     } catch (modeError: unknown) {
       setIsBlock(!nextBlock);
@@ -272,12 +256,12 @@ function TypstMathPopup() {
   }
 
   return (
-    <div className="typst-math-popup p-3 rounded-xl shadow-[0_12px_32px_rgba(0,0,0,0.35)] border border-gray-200 dark:border-[#3a3a46] bg-white dark:bg-[#2b2b33] text-gray-900 dark:text-[#f3f3f8] font-sans text-xs select-none transition-colors">
+    <div className="typst-math-popup rn-clr-content-primary rn-clr-shadow-modal rn-text-label-small rn-fontweight-regular p-3 select-none transition-colors">
       <div className="relative min-h-[70px]">
         {/* Syntax Highlighting Layer */}
         <pre
           aria-hidden="true"
-          className="typst-editor-highlight text-gray-900 dark:text-[#f3f3f8]"
+          className="typst-editor-highlight rn-clr-content-primary"
           dangerouslySetInnerHTML={{
             __html: highlightTypst(source || '') + (source.endsWith('\n') ? ' ' : ''),
           }}
@@ -302,42 +286,43 @@ function TypstMathPopup() {
           target="_blank"
           rel="noopener noreferrer"
           title="Typst Math Documentation"
-          className="absolute top-1 right-1 z-10 w-5 h-5 flex items-center justify-center rounded-full text-gray-400 dark:text-[#9e9eb2] hover:text-gray-200 hover:bg-white/10 text-[11px] font-bold transition-colors cursor-pointer"
+          className="typst-popup-hover typst-popup-muted absolute top-1 right-1 z-10 flex h-5 w-5 cursor-pointer items-center justify-center rounded-full rn-clr-content-tertiary text-[11px] rn-fontweight-semibold transition-colors"
         >
           ?
         </a>
       </div>
       {error && (
         <div
-          className="my-1.5 px-1 text-[11px] text-rose-500 dark:text-rose-400 font-medium"
+          className="my-1.5 px-1 rn-clr-content-negative rn-text-label-small rn-fontweight-medium"
           role="status"
         >
           {error}
         </div>
       )}
-      <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-900/[0.06] dark:border-[#353542]">
+      <div className="flex items-center justify-between mt-2 pt-2 border-t rn-clr-border-opaque">
         {/* Segmented Control Pill Toggle with Tooltip */}
         <div className="group relative flex items-center">
-          <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 transition-opacity">
-            <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-[#1a1a24] text-gray-500 dark:text-[#9e9eb2] text-[11px] font-medium shadow-lg border border-gray-200/80 dark:border-white/15 whitespace-nowrap">
-              <kbd className="inline-block px-1.5 py-0.5 rounded font-sans text-[10px] font-medium leading-none bg-black/5 dark:bg-[#323242] text-gray-500 dark:text-[#f3f3f8] border border-gray-200/90 dark:border-white/30 shadow-sm">
+          <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden -translate-x-1/2 flex-col items-center transition-opacity group-hover:flex">
+            <div className="flex items-center gap-1 px-2 py-1 rounded-lg rn-clr-background-elevation-30 rn-clr-content-secondary rn-clr-shadow-menu rn-text-label-small rn-fontweight-medium border rn-clr-border-opaque whitespace-nowrap">
+              <kbd className="inline-block px-1.5 py-0.5 rounded rn-clr-background-secondary rn-clr-content-primary rn-clr-border-opaque text-[10px] rn-fontweight-medium leading-none border shadow-sm">
                 Alt
               </kbd>
-              <span className="text-gray-400 text-[10px]">+</span>
-              <kbd className="inline-block px-1.5 py-0.5 rounded font-sans text-[10px] font-medium leading-none bg-black/5 dark:bg-[#323242] text-gray-500 dark:text-[#f3f3f8] border border-gray-200/90 dark:border-white/30 shadow-sm">
+              <span className="rn-clr-content-tertiary text-[10px]">+</span>
+              <kbd className="inline-block px-1.5 py-0.5 rounded rn-clr-background-secondary rn-clr-content-primary rn-clr-border-opaque text-[10px] rn-fontweight-medium leading-none border shadow-sm">
                 B
               </kbd>
             </div>
-            <div className="w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-white dark:border-t-[#1a1a24]" />
+            <div className="typst-popup-tooltip-arrow w-0 h-0 border-x-4 border-x-transparent border-t-4" />
           </div>
-          <div className="flex items-center p-0.5 rounded-lg bg-black/5 dark:bg-[#202027] border border-gray-200/70 dark:border-[#3a3a48]">
+          <div className="flex items-center p-0.5 rounded-lg rn-clr-background-secondary rn-clr-border-opaque border">
             <button
               type="button"
               onClick={() => void setBlockMode(false)}
+              aria-pressed={!isBlock}
               className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md transition-all cursor-pointer ${
                 !isBlock
-                  ? 'bg-[#5e79ff] text-white shadow-sm font-semibold'
-                  : 'text-gray-500 dark:text-[#9e9eb2] hover:text-gray-800 dark:hover:text-white font-medium'
+                  ? 'rn-clr-background-accent text-white rn-clr-shadow-default rn-fontweight-semibold'
+                  : 'typst-popup-hover typst-popup-muted rn-clr-content-secondary rn-fontweight-medium'
               }`}
             >
               <span className={`font-mono text-[10px] ${!isBlock ? 'opacity-90' : 'opacity-70'}`}>
@@ -348,10 +333,11 @@ function TypstMathPopup() {
             <button
               type="button"
               onClick={() => void setBlockMode(true)}
+              aria-pressed={isBlock}
               className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md transition-all cursor-pointer ${
                 isBlock
-                  ? 'bg-[#5e79ff] text-white shadow-sm font-semibold'
-                  : 'text-gray-500 dark:text-[#9e9eb2] hover:text-gray-800 dark:hover:text-white font-medium'
+                  ? 'rn-clr-background-accent text-white rn-clr-shadow-default rn-fontweight-semibold'
+                  : 'typst-popup-hover typst-popup-muted rn-clr-content-secondary rn-fontweight-medium'
               }`}
             >
               <span className={`font-mono text-[10px] ${isBlock ? 'opacity-90' : 'opacity-70'}`}>
@@ -364,42 +350,38 @@ function TypstMathPopup() {
         <div className="flex items-center gap-1.5">
           {/* Cancel Button with Tooltip */}
           <div className="group relative flex items-center">
-            <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 transition-opacity">
-              <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-[#1a1a24] text-gray-500 dark:text-[#9e9eb2] text-[11px] font-medium shadow-lg border border-gray-200/80 dark:border-white/15 whitespace-nowrap">
-                <kbd className="inline-block px-1.5 py-0.5 rounded font-sans text-[10px] font-medium leading-none bg-black/5 dark:bg-[#323242] text-gray-500 dark:text-[#f3f3f8] border border-gray-200/90 dark:border-white/30 shadow-sm">
+            <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden -translate-x-1/2 flex-col items-center transition-opacity group-hover:flex">
+              <div className="flex items-center gap-1 px-2 py-1 rounded-lg rn-clr-background-elevation-30 rn-clr-content-secondary rn-clr-shadow-menu rn-text-label-small rn-fontweight-medium border rn-clr-border-opaque whitespace-nowrap">
+                <kbd className="inline-block px-1.5 py-0.5 rounded rn-clr-background-secondary rn-clr-content-primary rn-clr-border-opaque text-[10px] rn-fontweight-medium leading-none border shadow-sm">
                   Esc
                 </kbd>
               </div>
-              <div className="w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-white dark:border-t-[#1a1a24]" />
+              <div className="typst-popup-tooltip-arrow w-0 h-0 border-x-4 border-x-transparent border-t-4" />
             </div>
             <button
               type="button"
               onClick={() => void dismissPopup()}
               disabled={pending}
-              className="rounded-lg px-2.5 py-1 text-xs font-medium text-gray-500 dark:text-[#9e9eb2] hover:text-gray-700 dark:hover:text-white hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+              className="typst-popup-action typst-popup-hover typst-popup-muted rounded-lg px-2.5 py-1 rn-clr-content-secondary rn-fontweight-medium cursor-pointer transition-colors"
             >
               Cancel
             </button>
           </div>
           {/* Done Button with Tooltip */}
           <div className="group relative flex items-center">
-            <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center z-50 transition-opacity">
-              <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-[#1a1a24] text-gray-500 dark:text-[#9e9eb2] text-[11px] font-medium shadow-lg border border-gray-200/80 dark:border-white/15 whitespace-nowrap">
-                <kbd className="inline-block px-1.5 py-0.5 rounded font-sans text-[10px] font-medium leading-none bg-black/5 dark:bg-[#323242] text-gray-500 dark:text-[#f3f3f8] border border-gray-200/90 dark:border-white/30 shadow-sm">
-                  Alt
-                </kbd>
-                <span className="text-gray-400 text-[10px]">+</span>
-                <kbd className="inline-block px-1.5 py-0.5 rounded font-sans text-[10px] font-medium leading-none bg-black/5 dark:bg-[#323242] text-gray-500 dark:text-[#f3f3f8] border border-gray-200/90 dark:border-white/30 shadow-sm">
+            <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 hidden -translate-x-1/2 flex-col items-center transition-opacity group-hover:flex">
+              <div className="flex items-center gap-1 px-2 py-1 rounded-lg rn-clr-background-elevation-30 rn-clr-content-secondary rn-clr-shadow-menu rn-text-label-small rn-fontweight-medium border rn-clr-border-opaque whitespace-nowrap">
+                <kbd className="inline-block px-1.5 py-0.5 rounded rn-clr-background-secondary rn-clr-content-primary rn-clr-border-opaque text-[10px] rn-fontweight-medium leading-none border shadow-sm">
                   ↵
                 </kbd>
               </div>
-              <div className="w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-white dark:border-t-[#1a1a24]" />
+              <div className="typst-popup-tooltip-arrow w-0 h-0 border-x-4 border-x-transparent border-t-4" />
             </div>
             <button
               type="button"
               onClick={() => void save()}
               disabled={pending}
-              className="rounded-lg bg-[#5e79ff] hover:bg-[#4d6cf5] active:bg-[#3d5ee8] px-3.5 py-1 text-xs font-semibold text-white shadow transition-all duration-150 flex items-center gap-1 cursor-pointer disabled:opacity-50"
+              className="typst-popup-action rounded-lg rn-clr-background-accent text-white rn-clr-shadow-default px-3.5 py-1 rn-fontweight-semibold transition-all duration-150 flex items-center gap-1 cursor-pointer"
             >
               <span>{pending ? (popupState?.isEditing ? 'Saving…' : 'Inserting…') : 'Done'}</span>
             </button>

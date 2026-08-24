@@ -17,6 +17,7 @@ import {
   findMathElementAtRange,
   insertRichTextAtRange,
   isNativeLatexElement,
+  setMathBlockAtRange,
 } from './remnote-math';
 import { highlightTypst } from './typst-grammar';
 
@@ -310,6 +311,29 @@ describe('RichText Insertion & Selection Edge Cases', () => {
     const richText = ['prefix ', sampleLatex, ' suffix'];
     const updated = insertRichTextAtRange(richText, [blockLatex], { start: 7, end: 8 });
     expect(updated).toEqual(['prefix ', blockLatex, ' suffix']);
+  });
+
+  it('toggles an existing math element and its alignment environment', () => {
+    const inlineAligned = {
+      i: 'x' as const,
+      text: String.raw`\begin{aligned}x &= 1\end{aligned}`,
+      block: false,
+    };
+    const richText = ['prefix ', inlineAligned, ' suffix'];
+
+    const block = setMathBlockAtRange(richText, { start: 7, end: 8 }, true);
+    expect(block).toEqual([
+      'prefix ',
+      {
+        ...inlineAligned,
+        text: String.raw`\begin{align}x &= 1\end{align}`,
+        block: true,
+      },
+      ' suffix',
+    ]);
+
+    expect(setMathBlockAtRange(block!, { start: 7, end: 8 }, false)).toEqual(richText);
+    expect(setMathBlockAtRange(richText, { start: 0, end: 1 }, true)).toBeUndefined();
   });
 
   it('handles rich text containing complex Rem references and formatted objects', () => {

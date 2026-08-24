@@ -4,32 +4,8 @@ module.exports = {
   theme: {
     extend: {
       fontFamily: {
-        sans: [
-          'Inter',
-          '-apple-system',
-          'BlinkMacSystemFont',
-          '"Segoe UI"',
-          'Roboto',
-          'Helvetica',
-          'Arial',
-          'sans-serif',
-          '"Apple Color Emoji"',
-          '"Segoe UI Emoji"',
-          '"Segoe UI Symbol"',
-        ],
-        serif: [
-          'Inter',
-          '-apple-system',
-          'BlinkMacSystemFont',
-          '"Segoe UI"',
-          'Roboto',
-          'Helvetica',
-          'Arial',
-          'sans-serif',
-          '"Apple Color Emoji"',
-          '"Segoe UI Emoji"',
-          '"Segoe UI Symbol"',
-        ],
+        sans: ['var(--rn-font-family)'],
+        serif: ['var(--rn-font-family)'],
         mono: [
           'SFMono-Regular',
           'Menlo',
@@ -39,15 +15,6 @@ module.exports = {
           'Courier',
           'monospace',
         ],
-      },
-      colors: {
-        rn: {
-          primary: '#5e79ff',
-          'primary-hover': '#4d6cf5',
-          darkBg: '#232329',
-          darkCard: '#2b2b33',
-          darkBorder: '#3a3a46',
-        },
       },
     },
   },

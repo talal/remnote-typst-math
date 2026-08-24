@@ -130,6 +130,26 @@ export function insertRichTextAtRange(
     return true;
   });
 }
+export function setMathBlockAtRange(
+  original: RichTextInterface,
+  range: { start: number; end: number },
+  block: boolean,
+): RichTextInterface | undefined {
+  const foundMath = findMathElementAtRange(original, range);
+  if (!foundMath || foundMath.range.start !== range.start || foundMath.range.end !== range.end) {
+    return undefined;
+  }
+
+  const text = block
+    ? foundMath.element.text
+        .replace(/\\begin\{aligned\}/g, '\\begin{align}')
+        .replace(/\\end\{aligned\}/g, '\\end{align}')
+    : foundMath.element.text
+        .replace(/\\begin\{align\*?\}/g, '\\begin{aligned}')
+        .replace(/\\end\{align\*?\}/g, '\\end{aligned}');
+
+  return insertRichTextAtRange(original, [{ ...foundMath.element, text, block }], foundMath.range);
+}
 
 export type FoundMathElement = {
   element: RichTextLatexInterface;
