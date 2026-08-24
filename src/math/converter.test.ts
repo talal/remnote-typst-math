@@ -47,6 +47,60 @@ function latexToTypstRaw(source: string): RawConversionResult {
     no_preamble: true,
   }) as RawConversionResult;
 }
+function generateBidirectionalFuzzCorpus(seed: number, count: number): string[] {
+  const atoms = ['x', 'y', 'z', 'a', 'b', 'n', 'alpha', 'beta', 'RR', 'NN', '0', '1', '2', 'pi'];
+  const operators = ['+', '-', '=', '<', '>', '<=', '>=', '!=', ':=', '->', '<=>', 'in', 'times'];
+  const textValues = [
+    'is natural',
+    'if',
+    'otherwise',
+    'a [b] c',
+    'quote " text',
+    'units: kg',
+    'left { right }',
+  ];
+  const corpus = [
+    'cal(A) := { x in RR | x space "is natural" }',
+    'x space "a [b] c"',
+    'x space "a {b} c"',
+    `x space ${JSON.stringify('quote " text')}`,
+  ];
+  let state = seed >>> 0;
+
+  for (let index = 0; index < count; index += 1) {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    const left = atoms[state % atoms.length];
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    const right = atoms[state % atoms.length];
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    const operator = operators[state % operators.length];
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    const textLiteral = JSON.stringify(textValues[state % textValues.length]);
+
+    switch (index % 6) {
+      case 0:
+        corpus.push(`${left} ${operator} ${right}`);
+        break;
+      case 1:
+        corpus.push(`${left}^(${right})`);
+        break;
+      case 2:
+        corpus.push(`${left} / ${right}`);
+        break;
+      case 3:
+        corpus.push(`sqrt(${left} + ${right})`);
+        break;
+      case 4:
+        corpus.push(`${left} space ${textLiteral}`);
+        break;
+      default:
+        corpus.push(`{ ${left} ${operator} ${right} | ${right} space ${textLiteral} }`);
+        break;
+    }
+  }
+
+  return corpus;
+}
 
 describe('Tylax Math WASM Low-level Conversions', () => {
   it.each([
@@ -151,6 +205,70 @@ describe('Converter Module Wrapper & Sanitization', () => {
     const result = wrapTypstToLatex('cases(1 "if" x > 0, 0 "otherwise")');
     expect(result.output).toContain('cases');
     expect(result.output).toContain('\\text{if}');
+  });
+  it('round-trips explicit spaces, text, and custom relations', () => {
+    const source = 'cal(A) := { x in RR | x space "is natural" }';
+    const latex = wrapTypstToLatex(source);
+
+    const result = wrapLatexToTypst(latex.output);
+
+    expect(result.output).toBe(source);
+  });
+
+  it('converts Tylax text brackets into a Typst string', () => {
+    const result = wrapLatexToTypst('\\text{[is natural]}');
+
+    expect(result.output).toBe('"is natural"');
+  });
+
+  it('restores LaTeX control spaces without inventing ordinary spaces', () => {
+    const explicitSpace = wrapLatexToTypst('x \\ y');
+    const ordinaryText = wrapLatexToTypst('x \\text{is natural}');
+
+    expect(explicitSpace.output).toBe('x space y');
+    expect(ordinaryText.output).toBe('x "is natural"');
+  });
+  it('normalizes named relations, sim, and underline artifacts', () => {
+    const namedRelation = wrapLatexToTypst('x \\mathrel{\\approx} y');
+    const simRelation = wrapLatexToTypst('x \\sim y');
+    const underline = wrapLatexToTypst('\\underline{x}');
+
+    expect(namedRelation.output).toBe('x approx y');
+    expect(simRelation.output).toBe('x tilde.op y');
+    expect(underline.output).toBe('underline(x)');
+    expect(wrapTypstToLatex(underline.output).output).toBe('\\underline{x}');
+  });
+
+  it('preserves non-breaking spaces across round-trips', () => {
+    const result = wrapLatexToTypst('x~y');
+
+    expect(result.output).toBe('x space.nobreak y');
+    expect(wrapTypstToLatex(result.output).output).toBe('x \\~ y');
+  });
+  it('keeps a deterministic fuzz corpus stable across repeated round-trips', () => {
+    const corpus = generateBidirectionalFuzzCorpus(0x5eed1234, 96);
+
+    corpus.forEach((source, index) => {
+      const label = `fuzz case ${index}: ${source}`;
+      let firstLatex: string;
+      let firstTypst: string;
+      let secondLatex: string;
+      let secondTypst: string;
+
+      try {
+        firstLatex = wrapTypstToLatex(source).output;
+        firstTypst = wrapLatexToTypst(firstLatex).output;
+        secondLatex = wrapTypstToLatex(firstTypst).output;
+        secondTypst = wrapLatexToTypst(secondLatex).output;
+      } catch (error: unknown) {
+        throw new Error(`${label} failed: ${String(error)}`);
+      }
+
+      expect(firstTypst, label).not.toContain('#text[');
+      expect(firstTypst, label).not.toContain('class("relation",');
+      expect(secondTypst, label).toBe(firstTypst);
+      expect(secondLatex, label).toBe(firstLatex);
+    });
   });
 });
 
