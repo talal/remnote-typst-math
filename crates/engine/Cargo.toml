@@ -1,0 +1,28 @@
+[package]
+name = "remnote-typst-math-engine"
+version = "0.1.0"
+edition = "2024"
+description = "Custom WASM engine for the RemNote Typst Math plugin: canonical, round-trip-safe LaTeX <-> Typst conversion built on tylax"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# default-features = false drops the CLI (clap) and native batch machinery.
+tylax = { version = "0.3.7", default-features = false }
+console_error_panic_hook = "0.1"
+wasm-bindgen = "0.2"
+
+# Release profile lives in the workspace root Cargo.toml (Cargo ignores
+# profiles declared in non-root members).
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = [
+  "-Oz",
+  "--enable-bulk-memory",
+  "--enable-nontrapping-float-to-int",
+  "--enable-sign-ext",
+  "--enable-mutable-globals",
+  "--enable-reference-types",
+]

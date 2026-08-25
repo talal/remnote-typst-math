@@ -12,3 +12,14 @@ dist
 dist-ssr
 node_modules
 PluginZip/
+
+# Rust / Wasm
+**/*.rs.bk
+**/mutants.out*/
+debug
+rustc-ice-*.txt
+target
+pkg
+corpus
+artifacts
+coverage

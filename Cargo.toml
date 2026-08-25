@@ -1,0 +1,23 @@
+[workspace]
+members = ["crates/engine"]
+exclude = ["crates/engine/fuzz", "crates/engine/third_party/tylax"]
+resolver = "2"
+
+# Vendored tylax 0.3.7 (crates/engine/third_party/tylax) with a termination
+# fix in `LatexConverter::fix_blackboard_bold`: upstream rewrites `bb(X)` to a
+# byte-identical slice for any argument outside {E,P,R,N,Z,Q,C} and rescans
+# from position 0, so `\mathbb{I}` loops forever. 0.3.7 is the latest release;
+# drop this patch when an upstream fix ships.
+[patch.crates-io]
+tylax = { path = "crates/engine/third_party/tylax" }
+
+# Workspace-root profiles: Cargo only honors profiles defined here.
+# Kept aggressive for WASM size (see crates/engine for wasm-pack flags).
+[profile.release]
+opt-level = 'z' # Optimize for size
+lto = true # Enable Link Time Optimization (LTO)
+codegen-units = 1 # Reduce parallel code generation units to increase optimization
+# NOTE: panic = 'abort' intentionally omitted. The binding layer relies on
+# catch_unwind to report conversion failures as structured results instead of
+# hard traps. Revisit once conversions are total and no longer rely on unwinds.
+strip = true # Strip symbols from binary

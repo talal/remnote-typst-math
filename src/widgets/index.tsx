@@ -15,7 +15,9 @@ async function onActivate(plugin: ReactRNPlugin) {
 
   // Caret-anchored floating popup (Alt+M or /typst)
   await plugin.app.registerCommand({
-    id: 'insert-typst-math',
+    // Keep in sync with the id in public/manifest.json. plugin.id is typed as
+    // string | undefined, so the namespace pins the manifest id at build time.
+    id: `typst-math.insert-typst-math`,
     name: 'Insert / Edit Typst Math',
     description: 'Convert Typst math into native RemNote LaTeX or edit existing math.',
     keywords: 'typst math latex equation edit',

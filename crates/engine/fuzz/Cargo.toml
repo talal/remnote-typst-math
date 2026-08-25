@@ -1,0 +1,46 @@
+[package]
+name = "remnote-typst-math-engine-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.remnote-typst-math-engine]
+path = ".."
+
+# Keep fuzzing out of the parent workspace: sanitizer builds need their own
+# profile and must not inherit the size-optimized release settings.
+[workspace]
+members = ["."]
+
+# Must mirror the root workspace's patch: this crate is its own workspace, so
+# without this entry the fuzzer would build unpatched tylax from crates.io and
+# keep tripping over the fix_blackboard_bold infinite loop.
+[patch.crates-io]
+tylax = { path = "../third_party/tylax" }
+
+[[bin]]
+name = "typst_to_latex"
+path = "fuzz_targets/typst_to_latex.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "latex_to_typst"
+path = "fuzz_targets/latex_to_typst.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "round_trip"
+path = "fuzz_targets/round_trip.rs"
+test = false
+doc = false
+bench = false

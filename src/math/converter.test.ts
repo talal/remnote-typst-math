@@ -1,17 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import * as tylax from '../../public/wasm/tylax.js';
-import {
-  initSync,
-  latexToTypstWithOptions,
-  typstToLatexWithOptions,
-} from '../../public/wasm/tylax.js';
+import { initSync } from '../../public/wasm/tylax.js';
 import {
   ConversionError,
+  detectFormat,
   latexToTypst as wrapLatexToTypst,
   setInitializedModule,
   typstToLatex as wrapTypstToLatex,
+  typstToVerifiedLatex,
 } from './converter';
 import {
   findMathElementAtRange,
@@ -28,138 +26,148 @@ beforeAll(() => {
   setInitializedModule(tylax as any);
 });
 
-type RawConversionResult = {
-  output: string;
-  success: boolean;
-  error?: string;
-};
+// Engine conversion behavior (conversion table, multiline alignment, lenient
+// passthrough) and bidirectional fuzzing live in crates/engine/tests/engine.rs
+// and run via `cargo test --workspace`.
 
-function typstToLatexRaw(source: string): RawConversionResult {
-  return typstToLatexWithOptions(source, {
-    full_document: false,
-    block_math_mode: false,
-  }) as RawConversionResult;
-}
+describe('Engine Format Detection & Diagnostics', () => {
+  it('classifies unambiguous LaTeX and Typst and defers ambiguous sources to unknown', () => {
+    expect(detectFormat('\\frac{a}{b}')).toBe('latex');
+    expect(detectFormat('\\alpha + \\beta')).toBe('latex');
+    expect(detectFormat('#set text(size: 10pt)')).toBe('typst');
+    expect(detectFormat('x + y')).toBe('unknown');
+    // Bare Typst math without strong indicators must not be misclassified.
+    expect(detectFormat('sum_(i=1)^n i')).toBe('unknown');
+  });
 
-function latexToTypstRaw(source: string): RawConversionResult {
-  return latexToTypstWithOptions(source, {
-    full_document: false,
-    pretty: false,
-    no_preamble: true,
-  }) as RawConversionResult;
-}
-function generateBidirectionalFuzzCorpus(seed: number, count: number): string[] {
-  const atoms = ['x', 'y', 'z', 'a', 'b', 'n', 'alpha', 'beta', 'RR', 'NN', '0', '1', '2', 'pi'];
-  const operators = ['+', '-', '=', '<', '>', '<=', '>=', '!=', ':=', '->', '<=>', 'in', 'times'];
-  const textValues = [
-    'is natural',
-    'if',
-    'otherwise',
-    'a [b] c',
-    'quote " text',
-    'units: kg',
-    'left { right }',
-  ];
-  const corpus = [
-    'cal(A) := { x in RR | x space "is natural" }',
-    'x space "a [b] c"',
-    'x space "a {b} c"',
-    `x space ${JSON.stringify('quote " text')}`,
-  ];
-  let state = seed >>> 0;
+  it('returns unknown for empty or whitespace-only input instead of throwing', () => {
+    expect(detectFormat('')).toBe('unknown');
+    expect(detectFormat('   \n\t  ')).toBe('unknown');
+  });
+});
 
-  for (let index = 0; index < count; index += 1) {
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    const left = atoms[state % atoms.length];
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    const right = atoms[state % atoms.length];
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    const operator = operators[state % operators.length];
-    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
-    const textLiteral = JSON.stringify(textValues[state % textValues.length]);
+describe('Save-Time Round-Trip Verification', () => {
+  const realModule = tylax;
 
-    switch (index % 6) {
-      case 0:
-        corpus.push(`${left} ${operator} ${right}`);
-        break;
-      case 1:
-        corpus.push(`${left}^(${right})`);
-        break;
-      case 2:
-        corpus.push(`${left} / ${right}`);
-        break;
-      case 3:
-        corpus.push(`sqrt(${left} + ${right})`);
-        break;
-      case 4:
-        corpus.push(`${left} space ${textLiteral}`);
-        break;
-      default:
-        corpus.push(`{ ${left} ${operator} ${right} | ${right} space ${textLiteral} }`);
-        break;
+  afterEach(() => {
+    setInitializedModule(realModule);
+  });
+
+  it('accepts ordinary expressions that reach a fixed point after one cycle', () => {
+    const result = typstToVerifiedLatex('sum_(i=1)^n i');
+    expect(result.output).toContain('sum');
+
+    const multiline = typstToVerifiedLatex('x &= 1 \\\n&= 2', true);
+    expect(multiline.output).toContain('\\begin{aligned}');
+  });
+
+  it('normalizes first-try constructs to a stable fixed point instead of refusing them', () => {
+    // These need one normalization cycle before their LaTeX is stable; the
+    // stored form must be the fixed point, not the raw first conversion.
+    for (const source of ['vec(1, 2, 3)', 'bold(A)', 'lim_(x -> 0) f(x)']) {
+      const stored = typstToVerifiedLatex(source).output;
+
+      expect(stored).not.toBe('');
+      // Whatever form was stored must reproduce itself across another cycle.
+      expect(wrapTypstToLatex(wrapLatexToTypst(stored).output).output).toBe(stored);
     }
-  }
-
-  return corpus;
-}
-
-describe('Tylax Math WASM Low-level Conversions', () => {
-  it.each([
-    ['x^2', 'x'],
-    ['a / b', 'frac'],
-    ['sqrt(x)', 'sqrt'],
-    ['sum_(i=1)^n i', 'sum'],
-    ['integral_0^oo e^(-x^2) dif x', 'int'],
-    ['mat(1, 2; 3, 4)', 'matrix'],
-    ['vec(1, 2, 3)', 'vec'],
-    ['lim_(x -> 0) (sin(x)) / x', 'lim'],
-    ['nabla times bold(E) = - partial(bold(B)) / partial(t)', 'nabla'],
-    ['forall x exists y (x < y)', 'forall'],
-  ])('converts %s to LaTeX containing %s', (source, expectedFragment) => {
-    const result = typstToLatexRaw(source);
-    expect(result.success).toBe(true);
-    expect(result.output).toContain(expectedFragment);
   });
 
-  it('converts representative LaTeX to Typst', () => {
-    const result = latexToTypstRaw('\\frac{1}{2} + \\alpha');
-    expect(result.success).toBe(true);
-    expect(result.output).toMatch(/frac|\//);
-    expect(result.output).toMatch(/alpha|α/);
+  it('returns the reached fixed point when stabilization takes multiple cycles', () => {
+    setInitializedModule({
+      default: async () => undefined,
+      // 'A' converts to 'B'; only 'B' reverses (to 'C'); 'C' is a fixed point.
+      typstToLatex: (input: string) => (input === 'A' ? 'B' : input),
+      latexToTypst: (input: string) => (input === 'B' ? 'C' : input),
+      detectFormat: () => 'latex',
+    } as any);
+
+    expect(typstToVerifiedLatex('A').output).toBe('C');
   });
 
-  it('reports a structured result for invalid input', () => {
-    const result = typstToLatexRaw('frac(');
-    expect(result).toHaveProperty('success');
-    expect(typeof result.output).toBe('string');
+  it('accepts the normalized forms of every repair-chain construct', () => {
+    // Each output of latexToTypst's normalization chain must itself verify.
+    for (const source of [
+      'x space "is natural"',
+      'x space.nobreak y',
+      'underline(x)',
+      'x approx y',
+      'x tilde.op y',
+    ]) {
+      expect(() => typstToVerifiedLatex(source)).not.toThrow();
+    }
   });
 
-  it('converts multiline aligned math in inline and block modes', () => {
-    const multilineTypst = `sum_(k=0)^n k
-    &= 1 + ... + n \\
-    &= (n(n+1)) / 2`;
+  it('rejects expressions whose LaTeX keeps mutating across conversion cycles', () => {
+    setInitializedModule({
+      default: async () => undefined,
+      typstToLatex: (input: string) => input,
+      latexToTypst: (input: string) => `${input}!`,
+      detectFormat: () => 'latex',
+    } as any);
 
-    const blockRes = typstToLatexWithOptions(multilineTypst, {
-      full_document: false,
-      block_math_mode: true,
-    }) as RawConversionResult;
-    expect(blockRes.output).toContain('align');
+    expect(() => typstToVerifiedLatex('A')).toThrow(/edit cycle/);
+  });
 
-    const rawInline = typstToLatexWithOptions(multilineTypst, {
-      full_document: false,
-      block_math_mode: false,
-    }) as RawConversionResult;
-    const inlineKaTeX = rawInline.output
-      .replace(/\\begin\{align\*?\}/g, '\\begin{aligned}')
-      .replace(/\\end\{align\*?\}/g, '\\end{aligned}');
-    expect(inlineKaTeX).toContain('aligned');
+  it('passes through conversion errors untouched while verifying', () => {
+    setInitializedModule({
+      default: async () => undefined,
+      typstToLatex: () => {
+        throw new Error('boom');
+      },
+      latexToTypst: (input: string) => input,
+      detectFormat: () => 'latex',
+    } as any);
 
-    const backToTypst = latexToTypstWithOptions(inlineKaTeX, {
-      full_document: false,
-      pretty: false,
-      no_preamble: true,
-    }) as RawConversionResult;
-    expect(backToTypst.output).toContain('sum_');
+    expect(() => typstToVerifiedLatex('A')).toThrow(ConversionError);
+    expect(() => typstToVerifiedLatex('A')).toThrow(/boom/);
+  });
+
+  it('refuses verification when the reverse leg degrades into error comments', () => {
+    // Tylax signals unsupported constructs by embedding `/* LaTeX Error: ... */`
+    // in its output. Such degraded output is non-canonical, and re-converting
+    // it is the known trigger for runaway engine cost, so saving must be
+    // refused instead of silently accepted.
+    setInitializedModule({
+      default: async () => undefined,
+      typstToLatex: (input: string) => input,
+      latexToTypst: (input: string) => `${input} /* LaTeX Error: } */`,
+      detectFormat: () => 'latex',
+    } as any);
+
+    expect(() => typstToVerifiedLatex('A')).toThrow(ConversionError);
+    expect(() => typstToVerifiedLatex('A')).toThrow(/does not support/);
+  });
+
+  it('refuses verification whose intermediates compound past the size cap', () => {
+    setInitializedModule({
+      default: async () => undefined,
+      typstToLatex: (input: string) => `${input}${input}`,
+      latexToTypst: (input: string) => `${input}${input}`,
+      detectFormat: () => 'latex',
+    } as any);
+
+    expect(() => typstToVerifiedLatex('A'.repeat(2_000))).toThrow(/keeps expanding/);
+  });
+
+  it('refuses fuzz-found subscript-prime poison through the real engine', () => {
+    // Minimized fuzzer artifacts (oom-/timeout- classes): dense `_'<garbage>`
+    // chains whose reverse leg degrades into tylax error comments. The save
+    // path must reject them quickly instead of re-entering the engine.
+    const fffd = String.fromCharCode(0xfffd);
+    const poison = [
+      '_',
+      String.fromCharCode(0x15),
+      "_'",
+      fffd,
+      "_'__'",
+      fffd,
+      fffd,
+      "_'ts_''___",
+      fffd,
+      "_'ts(_'_1'___'_'_4&heta_1'___'_'__",
+    ].join('');
+    expect(() => typstToVerifiedLatex(poison)).toThrow(ConversionError);
   });
 });
 
@@ -171,6 +179,32 @@ describe('Converter Module Wrapper & Sanitization', () => {
     expect(() => wrapLatexToTypst('   \t  ')).toThrow(ConversionError);
   });
 
+  it('refuses oversized input before reaching the engine', () => {
+    // Runaway conversions freeze RemNote's main thread with no way to
+    // interrupt WASM; human-authored math never approaches this scale.
+    const oversized = 'x+'.repeat(9_000); // 18k chars > 16k limit
+    expect(() => wrapTypstToLatex(oversized)).toThrow(/too large/);
+    expect(() => wrapLatexToTypst(oversized)).toThrow(/too large/);
+  });
+
+  it('refuses pathologically nested input before reaching the engine', () => {
+    const deep = '('.repeat(80) + 'x' + ')'.repeat(80);
+    expect(() => wrapTypstToLatex(deep)).toThrow(/nested too deeply/);
+    expect(() => wrapLatexToTypst(deep)).toThrow(/nested too deeply/);
+  });
+
+  it('counts LaTeX escaped braces as inert when measuring nesting', () => {
+    // \{ \} literals are characters, not grouping, and must not inflate depth.
+    const escapedBraces = '\\{'.repeat(100) + 'x';
+    expect(wrapLatexToTypst(escapedBraces).output).toBeDefined();
+  });
+
+  it('still converts large but flat expressions within the limits', () => {
+    const wide = '_x'.repeat(500); // 1000 chars, depth 0
+    const result = wrapTypstToLatex(wide);
+    expect(result.output).toContain('x');
+  });
+
   it('strips zero-width characters (ZWSP) before conversion', () => {
     const withZwsp = '\u200Bx^2\u200D + \uFEFFy^2';
     const result = wrapTypstToLatex(withZwsp);
@@ -180,15 +214,16 @@ describe('Converter Module Wrapper & Sanitization', () => {
     expect(result.output).not.toContain('\uFEFF');
   });
 
-  it('translates begin{align} to begin{aligned} in inline mode and preserves align in block mode', () => {
+  it('canonicalizes alignment environments to aligned in both modes', () => {
     const code = 'x &= 1 \\\n&= 2';
-    const inlineResult = wrapTypstToLatex(code, false);
-    expect(inlineResult.output).toContain('\\begin{aligned}');
-    expect(inlineResult.output).toContain('\\end{aligned}');
-    expect(inlineResult.output).not.toContain('\\begin{align}');
 
-    const blockResult = wrapTypstToLatex(code, true);
-    expect(blockResult.output).toContain('align');
+    for (const isBlock of [false, true]) {
+      const result = wrapTypstToLatex(code, isBlock);
+      expect(result.output).toContain('\\begin{aligned}');
+      expect(result.output).toContain('\\end{aligned}');
+      expect(result.output).not.toContain('\\begin{align}');
+      expect(result.output).not.toContain('\\begin{align*}');
+    }
   });
 
   it('strips enclosing $...$ produced by display LaTeX conversions', () => {
@@ -240,36 +275,24 @@ describe('Converter Module Wrapper & Sanitization', () => {
     expect(wrapTypstToLatex(underline.output).output).toBe('\\underline{x}');
   });
 
+  it('collapses redundant font wrapper nesting from mathrm-mathbf round-trips', () => {
+    // \mathrm and \mathbf both map through upright(...); the engine
+    // canonicalizes to the shortest render-identical form.
+    expect(wrapLatexToTypst('\\mathrm{\\mathbf{A}}').output).toBe('bold(A)');
+    expect(wrapLatexToTypst('\\mathrm{\\mathrm{\\mathbf{A}}}').output).toBe('bold(A)');
+  });
+
   it('preserves non-breaking spaces across round-trips', () => {
     const result = wrapLatexToTypst('x~y');
 
     expect(result.output).toBe('x space.nobreak y');
     expect(wrapTypstToLatex(result.output).output).toBe('x \\~ y');
   });
-  it('keeps a deterministic fuzz corpus stable across repeated round-trips', () => {
-    const corpus = generateBidirectionalFuzzCorpus(0x5eed1234, 96);
+  it('round-trips \\infty through its engine-default spelling', () => {
+    const result = wrapLatexToTypst('\\infty');
 
-    corpus.forEach((source, index) => {
-      const label = `fuzz case ${index}: ${source}`;
-      let firstLatex: string;
-      let firstTypst: string;
-      let secondLatex: string;
-      let secondTypst: string;
-
-      try {
-        firstLatex = wrapTypstToLatex(source).output;
-        firstTypst = wrapLatexToTypst(firstLatex).output;
-        secondLatex = wrapTypstToLatex(firstTypst).output;
-        secondTypst = wrapLatexToTypst(secondLatex).output;
-      } catch (error: unknown) {
-        throw new Error(`${label} failed: ${String(error)}`);
-      }
-
-      expect(firstTypst, label).not.toContain('#text[');
-      expect(firstTypst, label).not.toContain('class("relation",');
-      expect(secondTypst, label).toBe(firstTypst);
-      expect(secondLatex, label).toBe(firstLatex);
-    });
+    expect(result.output).toBe('infinity');
+    expect(wrapTypstToLatex(result.output).output).toBe('\\infty');
   });
 });
 
@@ -313,7 +336,7 @@ describe('RichText Insertion & Selection Edge Cases', () => {
     expect(updated).toEqual(['prefix ', blockLatex, ' suffix']);
   });
 
-  it('toggles an existing math element and its alignment environment', () => {
+  it('toggles an existing math element, leaving the aligned environment untouched', () => {
     const inlineAligned = {
       i: 'x' as const,
       text: String.raw`\begin{aligned}x &= 1\end{aligned}`,
@@ -322,15 +345,7 @@ describe('RichText Insertion & Selection Edge Cases', () => {
     const richText = ['prefix ', inlineAligned, ' suffix'];
 
     const block = setMathBlockAtRange(richText, { start: 7, end: 8 }, true);
-    expect(block).toEqual([
-      'prefix ',
-      {
-        ...inlineAligned,
-        text: String.raw`\begin{align}x &= 1\end{align}`,
-        block: true,
-      },
-      ' suffix',
-    ]);
+    expect(block).toEqual(['prefix ', { ...inlineAligned, block: true }, ' suffix']);
 
     expect(setMathBlockAtRange(block!, { start: 7, end: 8 }, false)).toEqual(richText);
     expect(setMathBlockAtRange(richText, { start: 0, end: 1 }, true)).toBeUndefined();
@@ -404,6 +419,34 @@ describe('RichText Insertion & Selection Edge Cases', () => {
     expect(clickedInside).toBeDefined();
     expect(clickedInside?.element.text).toBe('\\sum_{i=1}^n i');
     expect(clickedInside?.range).toEqual({ start: 6, end: 7 });
+  });
+
+  it('ignores plain-text carets that merely sit after a long math element', () => {
+    const mathElem = { i: 'x' as const, text: '\\sum_{i=1}^n i', block: false };
+    const richText = [mathElem, ' end'];
+
+    // Standard offsets deep inside trailing text must not be remapped into
+    // the preceding math element's expanded span.
+    expect(findMathElementAtRange(richText, { start: 2, end: 2 })).toBeUndefined();
+    expect(findMathElementAtRange(richText, { start: 3, end: 4 })).toBeUndefined();
+  });
+
+  it('keeps resolving sub-editor offsets despite the plain-text guard', () => {
+    const mathElem = { i: 'x' as const, text: '\\sum_{i=1}^n i', block: false };
+
+    expect(findMathElementAtRange([mathElem], { start: 9, end: 9 })?.element.text).toBe(
+      '\\sum_{i=1}^n i',
+    );
+    expect(findMathElementAtRange(['hi ', mathElem], { start: 12, end: 12 })?.element.text).toBe(
+      '\\sum_{i=1}^n i',
+    );
+  });
+
+  it('does not capture plain text sitting between two math elements', () => {
+    const math1 = { i: 'x' as const, text: 'a^2', block: false };
+    const math2 = { i: 'x' as const, text: 'b^2', block: false };
+
+    expect(findMathElementAtRange([math1, ' + ', math2], { start: 2, end: 2 })).toBeUndefined();
   });
 });
 

@@ -1,6 +1,8 @@
 import { SelectionType, type EditorRange, type RNPlugin } from '@remnote/plugin-sdk';
 import { findMathElementAtRange } from '../math/remnote-math';
-import { initializeConverter, latexToTypst } from '../math/converter';
+import { detectFormat, initializeConverter, latexToTypst } from '../math/converter';
+
+export const TYPST_MATH_SESSION_KEY = 'typst_math_data';
 
 export type MathEditorTarget = {
   remId: string;
@@ -10,21 +12,47 @@ export type MathEditorTarget = {
 export type TypstMathPopupData = {
   target: MathEditorTarget;
   initialSource?: string;
-  initialError?: string;
   isEditing?: boolean;
   isBlock?: boolean;
   floatingWidgetId?: string;
 };
 
+// Keep in sync with the widget registration width in widgets/index.tsx.
+const POPUP_WIDTH_PX = 380;
+
+function clampToViewport(left: number): number {
+  try {
+    // The caret rect is measured against the main window, which owns the
+    // viewport the floating widget renders in.
+    const viewportWidth = window.parent.innerWidth;
+    return Math.min(left, Math.max(16, viewportWidth - POPUP_WIDTH_PX - 16));
+  } catch {
+    // Cross-origin main window: skip clamping rather than misplace the popup.
+    return left;
+  }
+}
+
+let openInFlight: Promise<void> | undefined;
+
 export async function openInsertTypstMath(plugin: RNPlugin): Promise<void> {
-  const existingPopupData = await plugin.storage.getSession<TypstMathPopupData>('typst_math_data');
+  // Rapid repeat invocations (e.g. a held-down Alt+M) must not race the
+  // session-storage writes; serialize them behind the first open.
+  openInFlight ??= invokeOpen(plugin).finally(() => {
+    openInFlight = undefined;
+  });
+  return openInFlight;
+}
+
+async function invokeOpen(plugin: RNPlugin): Promise<void> {
+  const existingPopupData =
+    await plugin.storage.getSession<TypstMathPopupData>(TYPST_MATH_SESSION_KEY);
   if (existingPopupData?.target) {
     const popupIsOpen = existingPopupData.floatingWidgetId
       ? await plugin.window.isFloatingWidgetOpen(existingPopupData.floatingWidgetId)
       : false;
     if (popupIsOpen) return;
 
-    await plugin.storage.setSession('typst_math_data', undefined);
+    await plugin.storage.setSession(TYPST_MATH_SESSION_KEY, undefined);
   }
 
   const [selection, initialCaret] = await Promise.all([
@@ -59,8 +87,11 @@ export async function openInsertTypstMath(plugin: RNPlugin): Promise<void> {
     isBlock = Boolean(foundMath.element.block);
     try {
       await initializeConverter();
-      const conversion = latexToTypst(foundMath.element.text);
-      initialSource = conversion.output;
+      // Content written by other tools may not be LaTeX at all; pre-fill such
+      // elements verbatim instead of force-converting them.
+      const storedText = foundMath.element.text;
+      initialSource =
+        detectFormat(storedText) === 'typst' ? storedText : latexToTypst(storedText).output;
     } catch {
       initialSource = foundMath.element.text;
     }
@@ -89,11 +120,11 @@ export async function openInsertTypstMath(plugin: RNPlugin): Promise<void> {
 
   const position = {
     top: anchorCaret ? anchorCaret.bottom + 6 : 100,
-    left: anchorCaret ? Math.max(16, anchorCaret.left - 10) : 100,
+    left: anchorCaret ? clampToViewport(Math.max(16, anchorCaret.left - 10)) : 100,
   };
 
   await Promise.all([
-    plugin.storage.setSession('typst_math_data', popupData),
+    plugin.storage.setSession(TYPST_MATH_SESSION_KEY, popupData),
     plugin.window.closeAllFloatingWidgets(),
   ]);
 
@@ -104,6 +135,6 @@ export async function openInsertTypstMath(plugin: RNPlugin): Promise<void> {
     true,
   );
   if (floatingWidgetId) {
-    await plugin.storage.setSession('typst_math_data', { ...popupData, floatingWidgetId });
+    await plugin.storage.setSession(TYPST_MATH_SESSION_KEY, { ...popupData, floatingWidgetId });
   }
 }

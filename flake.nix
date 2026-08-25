@@ -34,12 +34,15 @@
 
         # Rust + WASM
         rustToolchain
+        wasm-pack
         cargo-fuzz
 
         # Tools
         ast-grep
+        bun
         codegraph
-        just
+        playwright-driver.browsers
+        python314
         ripgrep
         skills
       ];
@@ -47,6 +50,11 @@
       shellHook = ''
         # Add the local Node executable directory to PATH
         export PATH="$PWD/node_modules/.bin:$PATH"
+
+        # Skip checking whether the OS is a supported Ubuntu/Debian version
+        export PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=true
+        # Point Playwright to the Nix-provided browsers
+        export PLAYWRIGHT_BROWSERS_PATH=${pkgs.playwright-driver.browsers}
       '';
     };
   };

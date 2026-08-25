@@ -1,20 +1,22 @@
+// WASM engine built from crates/engine (npm run build:wasm); the tylax
+// dependency is pinned in crates/engine/Cargo.toml.
+// public/wasm/tylax.js and public/wasm/tylax_bg.wasm are regenerated together.
+//
+// The engine exports a minimal surface: conversions take math source (plus the
+// inline/block distinction) and return a string or throw; all conversion
+// options are fixed policy on the Rust side.
 export type ConversionResult = {
   output: string;
-  warnings: string[];
-};
-
-type TylaxRawResult = {
-  output?: unknown;
-  success?: unknown;
-  error?: unknown;
-  warnings?: unknown;
 };
 
 type TylaxModule = {
   default: (input?: unknown) => Promise<unknown>;
-  typstToLatexWithOptions: (input: string, options: Record<string, unknown>) => unknown;
-  latexToTypstWithOptions: (input: string, options: Record<string, unknown>) => unknown;
+  typstToLatex: (input: string, blockMathMode: boolean) => string;
+  latexToTypst: (input: string) => string;
+  detectFormat: (input: string) => string;
 };
+
+export type DetectedFormat = 'latex' | 'typst' | 'unknown';
 
 export class ConversionError extends Error {
   constructor(message: string) {
@@ -26,6 +28,77 @@ export class ConversionError extends Error {
 const tylaxModulePath = './wasm/tylax.js';
 const explicitSpaceMarkerBase = 'REMNOTEEXPLICITSPACEMARKER';
 const nonBreakingSpaceMarkerBase = 'REMNOTENOBREAKSPACEMARKER';
+
+// Generous headroom: vec(...) needs four cycles to converge; most others two.
+const MAX_VERIFICATION_CYCLES = 6;
+
+// --- Conversion cost guards -------------------------------------------------
+//
+// Tylax's conversion cost is superlinear on pathological inputs (fuzzing found
+// exponential blowups in Typst → LaTeX once deeply nested scripts combine with
+// its `/* LaTeX Error: ... */` recovery comments). A conversion that runs away
+// would freeze RemNote's main thread with no way to interrupt WASM, so inputs
+// beyond human-authored scale are refused up front with a structured error.
+// The caps sit far above anything real math produces (typical expressions are
+// well under 2 KB at bracket depth < 20).
+const MAX_CONVERSION_INPUT_LENGTH = 16_000;
+const MAX_CONVERSION_NESTING_DEPTH = 64;
+
+// Tylax signals unsupported constructs by embedding this comment in its
+// output. Such output is already non-canonical, and re-converting it is the
+// known path to runaway cost, so verified-latex refuses instead of cycling it.
+const tylaxErrorCommentPattern = /\/\*\s*LaTeX Error\b/;
+
+// Backstop for the verification loop: every cycle re-converts the previous
+// stage's output, so pathological inputs can compound growth across cycles
+// even when no error marker appears. Anything larger than the input cap can
+// no longer be human-authored math, so stop before feeding it to the engine.
+const MAX_VERIFICATION_INTERMEDIATE_LENGTH = MAX_CONVERSION_INPUT_LENGTH;
+
+/**
+ * Maximum bracket nesting depth of a math source, treating backslash-escaped
+ * characters as inert (LaTeX `\{` literals must not count).
+ */
+function maxNestingDepth(source: string): number {
+  let depth = 0;
+  let maxDepth = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '\\') {
+      index += 1;
+      continue;
+    }
+    if (char === '(' || char === '[' || char === '{') {
+      depth += 1;
+      if (depth > maxDepth) {
+        maxDepth = depth;
+      }
+    } else if (char === ')' || char === ']' || char === '}') {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+
+  return maxDepth;
+}
+
+function assertWithinConversionLimits(
+  source: string,
+  direction: 'Typst → LaTeX' | 'LaTeX → Typst',
+): void {
+  if (source.length > MAX_CONVERSION_INPUT_LENGTH) {
+    throw new ConversionError(
+      `${direction}: expression is too large to convert (${source.length} characters; the limit is ${MAX_CONVERSION_INPUT_LENGTH}).`,
+    );
+  }
+  const depth = maxNestingDepth(source);
+  if (depth > MAX_CONVERSION_NESTING_DEPTH) {
+    throw new ConversionError(
+      `${direction}: expression is nested too deeply to convert safely (depth ${depth}; the limit is ${MAX_CONVERSION_NESTING_DEPTH}).`,
+    );
+  }
+}
+// ---------------------------------------------------------------------------
 
 const relationOperatorCharacters = '!<=>:|+*/~^-';
 const namedRelationOperators: Record<string, string> = {
@@ -241,6 +314,36 @@ function normalizeTylaxBracketFunctions(source: string): string {
   return normalized;
 }
 
+/**
+ * Collapse redundant `upright(upright(...))` nesting produced by round-tripping
+ * `\mathrm{\mathbf{...}}`: Tylax maps both `\mathrm` and `\mathbf` to
+ * `upright(...)` wrappers, so every edit cycle would otherwise add a layer and
+ * the LaTeX would never reach a stable form.
+ */
+function normalizeRedundantUprightNesting(source: string): string {
+  let normalized = source;
+
+  for (;;) {
+    const index = normalized.indexOf('upright(upright(');
+    if (index === -1) {
+      return normalized;
+    }
+
+    const outerOpen = index + 'upright'.length;
+    const innerTokenStart = outerOpen + 1;
+    const innerOpen = innerTokenStart + 'upright'.length;
+    const innerClose = findMatchingDelimiter(normalized, innerOpen, '(', ')');
+    const outerClose = findMatchingDelimiter(normalized, outerOpen, '(', ')');
+    if (innerClose === -1 || outerClose === -1) {
+      return normalized;
+    }
+
+    const innerContent = normalized.slice(innerOpen + 1, innerClose);
+    normalized =
+      normalized.slice(0, index) + `upright(${innerContent})` + normalized.slice(outerClose + 1);
+  }
+}
+
 function normalizeTylaxText(
   source: string,
   explicitSpaceMarker: string,
@@ -324,6 +427,20 @@ export async function initializeConverter(): Promise<void> {
   initializedModule = await initializationPromise;
 }
 
+/**
+ * Classify stored math content before conversion. Returns 'unknown' for
+ * ambiguous or empty input so callers keep their existing LaTeX-first path.
+ */
+export function detectFormat(source: string): DetectedFormat {
+  const cleanSource = source.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  if (!cleanSource) {
+    return 'unknown';
+  }
+
+  const detected = getInitializedModule().detectFormat(cleanSource);
+  return detected === 'latex' || detected === 'typst' ? detected : 'unknown';
+}
+
 function getInitializedModule(): TylaxModule {
   if (!initializedModule) {
     throw new ConversionError(
@@ -334,58 +451,91 @@ function getInitializedModule(): TylaxModule {
   return initializedModule;
 }
 
-function convert(
-  rawResult: unknown,
-  direction: 'Typst → LaTeX' | 'LaTeX → Typst',
-): ConversionResult {
-  if (!rawResult || typeof rawResult !== 'object') {
-    throw new ConversionError(`${direction} returned an invalid result.`);
-  }
-
-  const result = rawResult as TylaxRawResult;
-  const output = typeof result.output === 'string' ? result.output : '';
-  const warnings = Array.isArray(result.warnings)
-    ? result.warnings.filter((warning): warning is string => typeof warning === 'string')
-    : [];
-
-  if (result.success === false) {
-    const message = typeof result.error === 'string' ? result.error : 'Unknown conversion error.';
-    throw new ConversionError(`${direction} failed: ${message}`);
-  }
-
-  if (!output.trim()) {
-    throw new ConversionError(`${direction} returned no output.`);
-  }
-
-  return { output, warnings };
-}
-
 export function typstToLatex(source: string, isBlock = false): ConversionResult {
   const cleanSource = source.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
   if (!cleanSource) {
     throw new ConversionError('Typst math input cannot be empty.');
   }
+  assertWithinConversionLimits(cleanSource, 'Typst → LaTeX');
 
   const module = getInitializedModule();
   try {
-    const rawResult = module.typstToLatexWithOptions(cleanSource, {
-      full_document: false,
-      block_math_mode: isBlock,
-    });
-    const result = convert(rawResult, 'Typst → LaTeX');
+    // Alignment canonicalization to \begin{aligned} happens engine-side.
+    const output = module.typstToLatex(cleanSource, isBlock);
 
-    // KaTeX inline math does not allow top-level \begin{align}. Convert to \begin{aligned} for inline mode.
-    let output = result.output;
-    if (!isBlock) {
-      output = output
-        .replace(/\\begin\{align\*?\}/g, '\\begin{aligned}')
-        .replace(/\\end\{align\*?\}/g, '\\end{aligned}');
-    }
-
-    return { ...result, output };
+    return { output };
   } catch (error: unknown) {
     throw toConversionError(error, 'Typst → LaTeX conversion failed');
   }
+}
+
+/**
+ * Convert Typst to LaTeX and store the nearest stable form across conversion
+ * cycles. Fresh user input frequently needs one normalization cycle before
+ * its LaTeX reproduces itself when edited and re-saved (e.g. vec(...) ->
+ * overrightarrow(...)), so cycles are walked until a fixed point is found.
+ * Refusals: a persistent mutation (saving it would corrupt the math on every
+ * future edit), and a reverse leg that degrades into tylax error comments
+ * (already lossy, and re-converting such output risks runaway engine cost).
+ */
+export function typstToVerifiedLatex(source: string, isBlock = false): ConversionResult {
+  const result = typstToLatex(source, isBlock);
+  let current = result.output;
+
+  for (let cycle = 0; cycle < MAX_VERIFICATION_CYCLES; cycle += 1) {
+    // Growth across cycles means the round trip is diverging, not stabilizing.
+    if (current.length > MAX_VERIFICATION_INTERMEDIATE_LENGTH) {
+      throw new ConversionError(
+        'This expression keeps expanding as it is converted back and forth, which indicates malformed math rather than a storable expression.',
+      );
+    }
+
+    let reverseTypst: string;
+    try {
+      reverseTypst = latexToTypst(current).output;
+    } catch {
+      // The reverse leg is unsupported for this construct, so instability
+      // cannot be proven either way. Accept the current form rather than
+      // blocking a legitimate save.
+      return { output: current };
+    }
+
+    // A degraded reverse conversion means the round trip already lost
+    // fidelity; re-entering Typst → LaTeX with error-recovery output is also
+    // the known trigger for runaway engine cost. Refuse instead of cycling.
+    if (tylaxErrorCommentPattern.test(reverseTypst)) {
+      throw new ConversionError(
+        'This expression contains constructs the converter does not support, and saving it could corrupt the math on a future edit.',
+      );
+    }
+
+    // Same divergence backstop applies before the reversed form re-enters the
+    // engine, so cap violations never surface as swappable "leg failed" cases.
+    if (reverseTypst.length > MAX_VERIFICATION_INTERMEDIATE_LENGTH) {
+      throw new ConversionError(
+        'This expression keeps expanding as it is converted back and forth, which indicates malformed math rather than a storable expression.',
+      );
+    }
+
+    let next: string;
+    try {
+      next = typstToLatex(reverseTypst, isBlock).output;
+    } catch {
+      // The forward leg failed on the reversed form, so instability cannot
+      // be proven either way. Accept the current form rather than blocking
+      // a legitimate save.
+      return { output: current };
+    }
+
+    if (next === current) {
+      return { output: current };
+    }
+    current = next;
+  }
+
+  throw new ConversionError(
+    'This expression does not survive an edit cycle: converting it back and forth keeps changing the underlying LaTeX, so saving it now could corrupt it on a future edit.',
+  );
 }
 
 export function latexToTypst(source: string): ConversionResult {
@@ -393,6 +543,7 @@ export function latexToTypst(source: string): ConversionResult {
   if (!cleanSource) {
     throw new ConversionError('LaTeX math input cannot be empty.');
   }
+  assertWithinConversionLimits(cleanSource, 'LaTeX → Typst');
 
   const module = getInitializedModule();
   try {
@@ -404,21 +555,16 @@ export function latexToTypst(source: string): ConversionResult {
       nonBreakingSpaceMarker,
     );
     const latexTextContents = extractLatexTextContents(sourceWithSpaceMarkers);
-    const rawResult = module.latexToTypstWithOptions(sourceWithSpaceMarkers, {
-      full_document: false,
-      pretty: false,
-      no_preamble: true,
-    });
-    const result = convert(rawResult, 'LaTeX → Typst');
-
-    // Strip wrapping $...$ if Tylax outputs it for display math.
-    let output = result.output.trim();
+    // Engine options are fixed policy on the Rust side (shorthands on, simple
+    // fractions as slashes, `infinity` spelling, lenient unknowns, no preamble).
+    let output = module.latexToTypst(sourceWithSpaceMarkers).trim();
     if (output.startsWith('$') && output.endsWith('$') && output.length >= 2) {
       output = output.slice(1, -1).trim();
     }
 
     output = normalizeTylaxRelationClasses(output);
     output = normalizeTylaxBracketFunctions(output);
+    output = normalizeRedundantUprightNesting(output);
     output = normalizeTylaxText(
       output,
       explicitSpaceMarker,
@@ -426,7 +572,7 @@ export function latexToTypst(source: string): ConversionResult {
       latexTextContents,
     );
 
-    return { ...result, output };
+    return { output };
   } catch (error: unknown) {
     throw toConversionError(error, 'LaTeX → Typst conversion failed');
   }

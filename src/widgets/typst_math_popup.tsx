@@ -1,90 +1,80 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { renderWidget, usePlugin, WidgetLocation } from '@remnote/plugin-sdk';
 import '../style.css';
-import { ConversionError, initializeConverter, typstToLatex } from '../math/converter';
-import {
-  createNativeLatex,
-  insertRichTextAtRange,
-  setMathBlockAtRange,
-} from '../math/remnote-math';
+import { createNativeLatex } from '../math/remnote-math';
 import { highlightTypst } from '../math/typst-grammar';
-import { type MathEditorTarget, type TypstMathPopupData } from '../commands/math';
-
-type PopupState = {
-  target: MathEditorTarget;
-  initialSource: string;
-  initialError?: string;
-  isEditing?: boolean;
-  isBlock?: boolean;
-};
-
-function readPopupState(data: unknown): PopupState | undefined {
-  if (!data || typeof data !== 'object' || !('target' in data)) {
-    return undefined;
-  }
-
-  const candidate = data as Partial<TypstMathPopupData>;
-  if (
-    !candidate.target ||
-    typeof candidate.target !== 'object' ||
-    typeof candidate.target.remId !== 'string' ||
-    !candidate.target.range ||
-    typeof candidate.target.range.start !== 'number' ||
-    typeof candidate.target.range.end !== 'number'
-  ) {
-    return undefined;
-  }
-
-  return {
-    target: candidate.target,
-    initialSource: typeof candidate.initialSource === 'string' ? candidate.initialSource : '',
-    initialError: typeof candidate.initialError === 'string' ? candidate.initialError : undefined,
-    isEditing: Boolean(candidate.isEditing),
-    isBlock: Boolean(candidate.isBlock),
-  };
-}
-
-function formatError(error: unknown): string {
-  if (error instanceof ConversionError || error instanceof Error) {
-    return error.message;
-  }
-
-  return 'Unable to insert Typst math.';
-}
+import { TYPST_MATH_SESSION_KEY } from '../commands/math';
+import {
+  EditorSession,
+  describeError,
+  parseSessionDescriptor,
+  type EditorSessionHost,
+  type PopupSessionDescriptor,
+  type SessionEffects,
+} from './editor-session';
 
 function TypstMathPopup() {
   const plugin = usePlugin();
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const [popupState, setPopupState] = useState<PopupState>();
+  const highlightRef = useRef<HTMLPreElement>(null);
+  const [descriptor, setDescriptor] = useState<PopupSessionDescriptor>();
+  const [session, setSession] = useState<EditorSession>();
+  // `source` and `isBlock` mirror the session for rendering; the session is
+  // authoritative and pushes changes back through the effects callbacks.
   const [source, setSource] = useState('');
   const [isBlock, setIsBlock] = useState(false);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
-  const saveInFlight = useRef(false);
-  const modeSwitchInFlight = useRef(false);
 
   useEffect(() => {
     let active = true;
 
     async function loadData() {
       try {
-        const sessionData = await plugin.storage.getSession<unknown>('typst_math_data');
-        const state = readPopupState(sessionData);
+        const sessionData = await plugin.storage.getSession<unknown>(TYPST_MATH_SESSION_KEY);
+        const parsed = parseSessionDescriptor(sessionData);
 
         if (!active) return;
 
-        if (!state) {
+        if (!parsed) {
           setError('The editor target could not be recovered.');
           return;
         }
 
-        setPopupState(state);
-        setSource(state.initialSource);
-        setIsBlock(Boolean(state.isBlock));
-        setError(state.initialError);
+        const host: EditorSessionHost = {
+          openRem: async (remId) => {
+            const rem = await plugin.rem.findOne(remId);
+            if (!rem) return undefined;
+            return { text: rem.text || [], write: (text) => rem.setText(text) };
+          },
+          createLatexElement: (latex, block) => createNativeLatex(plugin, latex, block),
+          notify: async (message) => {
+            try {
+              await plugin.app.toast(message);
+            } catch {
+              // A toast failure must not turn a completed Rem update into a retryable save.
+            }
+          },
+          dismiss: async () => {
+            await plugin.storage.setSession(TYPST_MATH_SESSION_KEY, undefined);
+            await closePopup();
+          },
+        };
+
+        const effects: SessionEffects = {
+          onError: setError,
+          onPending: setPending,
+          onBlockChanged: setIsBlock,
+        };
+
+        const editorSession = new EditorSession(host, effects, parsed);
+        setDescriptor(parsed);
+        setSession(editorSession);
+        setSource(editorSession.source);
+        setIsBlock(editorSession.isBlock);
       } catch (contextError: unknown) {
         if (active) {
-          setError(formatError(contextError));
+          setError(describeError(contextError));
         }
       }
     }
@@ -97,10 +87,22 @@ function TypstMathPopup() {
   }, [plugin]);
 
   useEffect(() => {
-    if (popupState) {
+    if (descriptor) {
       inputRef.current?.focus();
     }
-  }, [popupState]);
+  }, [descriptor]);
+
+  // The highlight layer overlays the textarea without native scrolling, so it
+  // must mirror the textarea's scrollTop to stay aligned with the caret.
+  function syncHighlightScroll(): void {
+    if (inputRef.current && highlightRef.current) {
+      highlightRef.current.scrollTop = inputRef.current.scrollTop;
+    }
+  }
+
+  useEffect(() => {
+    syncHighlightScroll();
+  }, [source]);
 
   async function closePopup(): Promise<void> {
     try {
@@ -111,68 +113,35 @@ function TypstMathPopup() {
     }
   }
 
-  async function notify(message: string): Promise<void> {
-    try {
-      await plugin.app.toast(message);
-    } catch {
-      // A toast failure must not turn a completed Rem update into a retryable save.
-    }
-  }
-
-  async function dismissPopup(): Promise<void> {
-    await plugin.storage.setSession('typst_math_data', undefined);
+  /** Dismissal path when no session exists yet (target failed to load). */
+  async function dismissDirect(): Promise<void> {
+    await plugin.storage.setSession(TYPST_MATH_SESSION_KEY, undefined);
     await closePopup();
   }
 
-  async function updateMath(
-    input: string,
-    block: boolean,
-    target: MathEditorTarget,
-  ): Promise<void> {
-    await initializeConverter();
-    const conversion = typstToLatex(input, block);
-    const richText = await createNativeLatex(plugin, conversion.output, block);
-    const rem = await plugin.rem.findOne(target.remId);
-    if (!rem) {
-      throw new Error('The target Rem is no longer available. Reopen the editor and try again.');
+  function toggleBlock(next: boolean): void {
+    if (!session) {
+      setIsBlock(next);
+      return;
     }
-
-    const currentText = rem.text || [];
-    const updatedText = insertRichTextAtRange(currentText, richText, target.range);
-    await rem.setText(updatedText);
+    void session.toggleBlock(next);
   }
 
-  async function save(): Promise<void> {
-    if (saveInFlight.current || modeSwitchInFlight.current) return;
-    if (!popupState) {
+  function save(): void {
+    if (!session) {
       const message = 'The editor target is still loading. Try again.';
       setError(message);
-      await notify(message);
+      void sessionlessNotify(message);
       return;
     }
+    void session.save();
+  }
 
-    const input = source.trim();
-    if (!input) {
-      setError('Enter a Typst math expression first.');
-      return;
-    }
-
-    saveInFlight.current = true;
-    setPending(true);
-    setError(undefined);
-    let committed = false;
-
+  async function sessionlessNotify(message: string): Promise<void> {
     try {
-      await updateMath(input, isBlock, popupState.target);
-      committed = true;
-      await dismissPopup();
-    } catch (saveError: unknown) {
-      const message = committed ? 'Saved, but the editor could not close.' : formatError(saveError);
-      setError(message);
-      await notify(committed ? message : `Typst math failed: ${message}`);
-    } finally {
-      saveInFlight.current = false;
-      setPending(false);
+      await plugin.app.toast(message);
+    } catch {
+      // Ignore: toasts are best-effort.
     }
   }
 
@@ -180,41 +149,43 @@ function TypstMathPopup() {
     function onWindowKeyDown(e: globalThis.KeyboardEvent) {
       if (e.key === 'Escape') {
         e.preventDefault();
-        void dismissPopup();
+        void (session ? session.dismiss() : dismissDirect());
       } else if (e.altKey && (e.key === 'm' || e.key === 'M' || e.code === 'KeyM')) {
         e.preventDefault();
         inputRef.current?.focus();
       } else if (e.altKey && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault();
-        void setBlockMode(!isBlock);
+        toggleBlock(!isBlock);
       } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
         e.preventDefault();
-        void save();
+        save();
       }
     }
     window.addEventListener('keydown', onWindowKeyDown);
     return () => window.removeEventListener('keydown', onWindowKeyDown);
-  }, [plugin, isBlock, source, popupState]);
+  });
 
   useEffect(() => {
-    let isDark =
-      window.matchMedia('(prefers-color-scheme: dark)').matches ||
-      document.documentElement.classList.contains('dark') ||
-      document.body.classList.contains('dark') ||
-      document.documentElement.getAttribute('data-theme') === 'dark';
+    function isInDarkTheme(doc: Document): boolean {
+      return (
+        doc.documentElement.classList.contains('dark') ||
+        doc.body.classList.contains('dark') ||
+        doc.documentElement.getAttribute('data-theme') === 'dark'
+      );
+    }
 
+    // Prefer RemNote's own theme signals over the OS preference: the app can
+    // be light while the OS is dark.
+    let isDark = isInDarkTheme(document);
     if (!isDark) {
       try {
-        if (
-          window.parent?.document?.documentElement?.classList?.contains('dark') ||
-          window.parent?.document?.body?.classList?.contains('dark') ||
-          window.parent?.document?.documentElement?.getAttribute('data-theme') === 'dark'
-        ) {
-          isDark = true;
-        }
+        isDark = isInDarkTheme(window.parent.document);
       } catch {
-        // Cross-origin iframe fallback
+        // Cross-origin iframe: the parent document is inaccessible.
       }
+    }
+    if (!isDark) {
+      isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
 
     if (isDark) {
@@ -223,43 +194,12 @@ function TypstMathPopup() {
     }
   }, []);
 
-  async function setBlockMode(nextBlock: boolean): Promise<void> {
-    if (isBlock === nextBlock || saveInFlight.current || modeSwitchInFlight.current) return;
-
-    setIsBlock(nextBlock);
-    if (!popupState?.isEditing) return;
-
-    modeSwitchInFlight.current = true;
-    try {
-      const rem = await plugin.rem.findOne(popupState.target.remId);
-      if (!rem) {
-        throw new Error('The target Rem is no longer available. Reopen the editor and try again.');
-      }
-
-      const updatedText = setMathBlockAtRange(rem.text || [], popupState.target.range, nextBlock);
-      if (!updatedText) {
-        throw new Error(
-          'The target math element is no longer available. Reopen the editor and try again.',
-        );
-      }
-
-      await rem.setText(updatedText);
-      setError(undefined);
-    } catch (modeError: unknown) {
-      setIsBlock(!nextBlock);
-      const message = formatError(modeError);
-      setError(message);
-      await notify(`Typst math failed: ${message}`);
-    } finally {
-      modeSwitchInFlight.current = false;
-    }
-  }
-
   return (
     <div className="typst-math-popup rn-clr-content-primary rn-clr-shadow-modal rn-text-label-small rn-fontweight-regular p-3 select-none transition-colors">
       <div className="relative min-h-[70px]">
         {/* Syntax Highlighting Layer */}
         <pre
+          ref={highlightRef}
           aria-hidden="true"
           className="typst-editor-highlight rn-clr-content-primary"
           dangerouslySetInnerHTML={{
@@ -272,8 +212,9 @@ function TypstMathPopup() {
           value={source}
           onChange={(event) => {
             setSource(event.target.value);
-            setError(undefined);
+            session?.setSource(event.target.value);
           }}
+          onScroll={syncHighlightScroll}
           placeholder="e.g. mat(1, 2; 3, 4)"
           spellCheck={false}
           disabled={pending}
@@ -317,7 +258,7 @@ function TypstMathPopup() {
           <div className="flex items-center p-0.5 rounded-lg rn-clr-background-secondary rn-clr-border-opaque border">
             <button
               type="button"
-              onClick={() => void setBlockMode(false)}
+              onClick={() => toggleBlock(false)}
               aria-pressed={!isBlock}
               className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md transition-all cursor-pointer ${
                 !isBlock
@@ -332,7 +273,7 @@ function TypstMathPopup() {
             </button>
             <button
               type="button"
-              onClick={() => void setBlockMode(true)}
+              onClick={() => toggleBlock(true)}
               aria-pressed={isBlock}
               className={`flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-md transition-all cursor-pointer ${
                 isBlock
@@ -360,7 +301,7 @@ function TypstMathPopup() {
             </div>
             <button
               type="button"
-              onClick={() => void dismissPopup()}
+              onClick={() => void (session ? session.dismiss() : dismissDirect())}
               disabled={pending}
               className="typst-popup-action typst-popup-hover typst-popup-muted rounded-lg px-2.5 py-1 rn-clr-content-secondary rn-fontweight-medium cursor-pointer transition-colors"
             >
@@ -379,11 +320,11 @@ function TypstMathPopup() {
             </div>
             <button
               type="button"
-              onClick={() => void save()}
+              onClick={() => save()}
               disabled={pending}
               className="typst-popup-action rounded-lg rn-clr-background-accent text-white rn-clr-shadow-default px-3.5 py-1 rn-fontweight-semibold transition-all duration-150 flex items-center gap-1 cursor-pointer"
             >
-              <span>{pending ? (popupState?.isEditing ? 'Saving…' : 'Inserting…') : 'Done'}</span>
+              <span>{pending ? (descriptor?.isEditing ? 'Saving…' : 'Inserting…') : 'Done'}</span>
             </button>
           </div>
         </div>

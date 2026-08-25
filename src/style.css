@@ -6,7 +6,7 @@ html,
 body {
   margin: 0;
   color: var(--rn-clr-content-primary, CanvasText);
-  font-family: var(--rn-font-family);
+  font-family: var(--rn-font-family, system-ui, sans-serif);
   padding: 1px 0 2px;
   background: var(--rn-clr-background-primary, #ffffff) !important;
 }
@@ -65,7 +65,7 @@ body[data-theme='dark'] {
 
 /* Shared popup interaction primitives. */
 .typst-math-popup {
-  font-family: var(--rn-font-family);
+  font-family: var(--rn-font-family, system-ui, sans-serif);
   background-color: var(--rn-clr-background-primary);
   border: 1px solid var(--rn-clr-background-secondary);
 }
@@ -155,8 +155,12 @@ body[data-theme='dark'] {
 }
 
 .typst-editor-input::selection {
-  background: var(
-    --rn-clr-background-light-accent,
-    var(--rn-clr-background-accent, Highlight)
+  /* Translucent wash: the visible token colors live in the highlight layer
+     beneath the textarea, so an opaque native selection would hide them.
+     Mirrors RemNote's native LaTeX editor, where selected code stays legible. */
+  background: color-mix(
+    in srgb,
+    var(--rn-clr-background-light-accent, var(--rn-clr-background-accent, Highlight)) 45%,
+    transparent
   ) !important;
 }

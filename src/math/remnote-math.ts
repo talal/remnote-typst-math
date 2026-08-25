@@ -102,12 +102,11 @@ export function insertRichTextAtRange(
           result.push({ ...elem, text: keepRightText });
         }
       } else {
+        // Atomic non-math elements (rem references, cloze, etc.) are fully
+        // replaced when the range overlaps them: insertion replaces them.
         if (!insertedDone) {
           result.push(...inserted);
           insertedDone = true;
-        }
-        if (elemStart >= end || elemEnd <= start) {
-          result.push(elem);
         }
       }
     }
@@ -140,15 +139,9 @@ export function setMathBlockAtRange(
     return undefined;
   }
 
-  const text = block
-    ? foundMath.element.text
-        .replace(/\\begin\{aligned\}/g, '\\begin{align}')
-        .replace(/\\end\{aligned\}/g, '\\end{align}')
-    : foundMath.element.text
-        .replace(/\\begin\{align\*?\}/g, '\\begin{aligned}')
-        .replace(/\\end\{align\*?\}/g, '\\end{aligned}');
-
-  return insertRichTextAtRange(original, [{ ...foundMath.element, text, block }], foundMath.range);
+  // Alignment environments stay untouched: `aligned` is canonical in both
+  // modes; toggling only flips where RemNote renders the math.
+  return insertRichTextAtRange(original, [{ ...foundMath.element, block }], foundMath.range);
 }
 
 export type FoundMathElement = {
@@ -184,6 +177,22 @@ export function findMathElementAtRange(
           range: { start: elemStart, end: elemEnd },
         };
       }
+    }
+  }
+
+  // A range that lands strictly inside plain text under standard offsets
+  // cannot come from RemNote's Slate LaTeX sub-editor, whose offsets expand
+  // math elements to their character length. Skip the expanded-offset passes
+  // below so carets in text beside math are not pulled back into it.
+  standardOffset = 0;
+  for (const elem of richText) {
+    const elemLen = getElementLength(elem);
+    const elemStart = standardOffset;
+    const elemEnd = standardOffset + elemLen;
+    standardOffset = elemEnd;
+
+    if (typeof elem === 'string' && start < elemEnd && end > elemStart) {
+      return undefined;
     }
   }
 

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Common Changelog](https://common-changelog.org/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.1.0 - 2026-08-26
+
+### Changed
+
+- Simplify round-trip conversion by implementing our own Wasm engine instead of using pre-built Wasm from Tylax
+- Use `aligned` instead of `align` for LaTeX
+
 ## 1.0.4 - 2026-08-25
 
 ### Changed
