@@ -37,16 +37,13 @@ This plugin bridges the two worlds:
 
 ## Keyboard Shortcuts
 
-<!-- dprint-ignore-start -->
-<!-- prettier-ignore-start -->
-| Shortcut | Action |
-| <kbd>Alt</kbd> + <kbd>M</kbd> | Open the Typst math popup; if already open, keep it open and focus the editor |
-| <kbd>Alt</kbd> + <kbd>B</kbd> | Toggle between inline and block math modes |
-| <kbd>Enter</kbd> | Save and then close the popup |
-| <kbd>Shift</kbd> + <kbd>Enter</kbd> | Insert a new line |
-| <kbd>Esc</kbd> | Cancel and dismiss the popup without saving |
-<!-- prettier-ignore-end -->
-<!-- dprint-ignore-end -->
+| Shortcut                            | Action                                                                    |
+| :---------------------------------- | :------------------------------------------------------------------------ |
+| <kbd>Alt</kbd> + <kbd>M</kbd>       | Open Typst math popup; if already open, keep it open and focus the editor |
+| <kbd>Alt</kbd> + <kbd>B</kbd>       | Toggle between inline and block math modes                                |
+| <kbd>Enter</kbd>                    | Save and then close the popup                                             |
+| <kbd>Shift</kbd> + <kbd>Enter</kbd> | Insert a new line                                                         |
+| <kbd>Esc</kbd>                      | Cancel and dismiss the popup without saving                               |
 
 ## Syntax Examples
 
