@@ -1,12 +1,12 @@
 {
   "name": "remnote-typst-math",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "private": true,
   "license": "MIT",
   "scripts": {
-    "build": "npx remnote-plugin validate && shx rm -rf dist && npm run build:wasm && cross-env NODE_ENV=production webpack --color --progress && cd dist && bestzip ../PluginZip.zip ./*",
-    "build:wasm": "wasm-pack build crates/engine --target web --release --out-dir ../../public/wasm --out-name tylax && shx rm -f public/wasm/.gitignore public/wasm/package.json public/wasm/tylax.d.ts public/wasm/tylax_bg.wasm.d.ts",
-    "bench": "node scripts/bench-conversion.mjs",
+    "build": "remnote-plugin validate && shx rm -rf dist && cross-env NODE_ENV=production webpack --color --progress && cd dist && bestzip ../PluginZip.zip ./*",
+    "bench": "vite-node scripts/bench-conversion.ts",
+    "fuzz": "cross-env FUZZ_CLI=1 vite-node scripts/fuzz-conversion.ts",
     "check": "vp check",
     "check:fix": "vp check --fix",
     "check-types": "vp check --no-fmt --no-lint",

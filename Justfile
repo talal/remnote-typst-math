@@ -5,32 +5,26 @@ alias fmt := check-fix
 default:
     @just --list
 
-# run test suites for plugin and all crates
+# run the plugin test suite
 test:
-    cargo test --workspace
     npm run test
 
-# benchmark save-path conversion cost against the committed wasm engine
+# benchmark save-path conversion cost against the pure TypeScript engine
 bench:
     npm run bench
 
-# fuzz every wasm engine target sequentially (round_trip, typst_to_latex, latex_to_typst)
+# fuzz the TypeScript conversion engine (time-boxed; FUZZ_TIME seconds, default 120)
 fuzz:
-    cd crates/engine && for t in $(cargo fuzz list); do cargo fuzz run "$t" --release -- -max_total_time=${FUZZ_TIME:-120} -detect_leaks=0; done
+    npm run fuzz -- --seconds=${FUZZ_TIME:-120}
 
-# run static analysis, formatting, type checks, and cargo clippy checks
+# run static analysis, formatting, and type checks
 check:
-    cargo fmt --all --check
-    cargo clippy --workspace --all-targets -- -D warnings
     npm run check
 
 # fix formatting and lint issues across the repository
 check-fix:
-    cargo fmt --all
-    cargo clippy --fix --workspace --allow-no-vcs
     npm run check:fix
 
 # remove all build artifacts and generated outputs
 clean:
-    cargo clean
-    rm -rf node_modules dist crates/*/pkg
+    rm -rf node_modules dist

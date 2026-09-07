@@ -3,27 +3,14 @@
 
   inputs = {
     nixpkgs.url = "https://channels.nixos.org/nixpkgs-unstable/nixexprs.tar.zst";
-
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
   };
 
   outputs = {
     nixpkgs,
-    rust-overlay,
     ...
   }: let
-    overlays = [(import rust-overlay)];
     pkgs = import nixpkgs {
       system = "x86_64-linux";
-      inherit overlays;
-    };
-
-    rustToolchain = pkgs.rust-bin.nightly.latest.default.override {
-      extensions = ["rust-src" "rust-analyzer" "llvm-tools-preview"];
-      targets = ["wasm32-unknown-unknown"];
     };
   in {
     devShells.x86_64-linux.default = pkgs.mkShell {
@@ -32,17 +19,12 @@
         nodejs_24
         typescript-language-server
 
-        # Rust + WASM
-        rustToolchain
-        wasm-pack
-        cargo-fuzz
-
         # Tools
         ast-grep
         bun
         codegraph
         playwright-driver.browsers
-        python314
+        python3
         ripgrep
         skills
       ];

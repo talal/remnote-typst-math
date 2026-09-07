@@ -1,5 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { renderWidget, usePlugin, WidgetLocation } from '@remnote/plugin-sdk';
+import {
+  renderWidget,
+  useOnMessageBroadcast,
+  usePlugin,
+  WidgetLocation,
+} from '@remnote/plugin-sdk';
 import '../style.css';
 import { createNativeLatex } from '../math/remnote-math';
 import { highlightTypst } from '../math/typst-grammar';
@@ -38,6 +43,9 @@ function TypstMathPopup() {
 
         if (!parsed) {
           setError('The editor target could not be recovered.');
+          // Clear the corrupt handoff so the next Alt+M starts fresh instead
+          // of re-reading the same unrecoverable target.
+          void plugin.storage.setSession(TYPST_MATH_SESSION_KEY, undefined).catch(() => {});
           return;
         }
 
@@ -92,6 +100,12 @@ function TypstMathPopup() {
     }
   }, [descriptor]);
 
+  useOnMessageBroadcast((message) => {
+    if (message === 'focus') {
+      inputRef.current?.focus();
+    }
+  });
+
   // The highlight layer overlays the textarea without native scrolling, so it
   // must mirror the textarea's scrollTop to stay aligned with the caret.
   function syncHighlightScroll(): void {
@@ -105,11 +119,33 @@ function TypstMathPopup() {
   }, [source]);
 
   async function closePopup(): Promise<void> {
+    // Prefer closing only our own widget; the global fallback runs solely
+    // when neither the widget context nor the stored handoff id is usable,
+    // so other plugins' floating widgets are never disturbed on this path.
     try {
       const context = await plugin.widget.getWidgetContext<WidgetLocation.FloatingWidget>();
-      await plugin.window.closeFloatingWidget(context.floatingWidgetId);
+      if (context?.floatingWidgetId) {
+        await plugin.window.closeFloatingWidget(context.floatingWidgetId);
+        return;
+      }
     } catch {
+      // Fall through to the stored-handoff lookup below.
+    }
+    try {
+      const stored = await plugin.storage.getSession<{ floatingWidgetId?: unknown }>(
+        TYPST_MATH_SESSION_KEY,
+      );
+      if (stored && typeof stored.floatingWidgetId === 'string') {
+        await plugin.window.closeFloatingWidget(stored.floatingWidgetId);
+        return;
+      }
+    } catch {
+      // Fall through to the global fallback below.
+    }
+    try {
       await plugin.window.closeAllFloatingWidgets();
+    } catch {
+      // Ignore: closing fails if already closed or context is unavailable
     }
   }
 
@@ -146,17 +182,26 @@ function TypstMathPopup() {
   }
 
   useEffect(() => {
+    return () => {
+      session?.dispose();
+    };
+  }, [session]);
+
+  useEffect(() => {
     function onWindowKeyDown(e: globalThis.KeyboardEvent) {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !e.isComposing) {
         e.preventDefault();
         void (session ? session.dismiss() : dismissDirect());
       } else if (e.altKey && (e.key === 'm' || e.key === 'M' || e.code === 'KeyM')) {
         e.preventDefault();
         inputRef.current?.focus();
-      } else if (e.altKey && (e.key === 'b' || e.key === 'B')) {
+      } else if (e.altKey && (e.key === 'b' || e.key === 'B' || e.code === 'KeyB')) {
         e.preventDefault();
         toggleBlock(!isBlock);
       } else if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+        if (e.target instanceof HTMLButtonElement) {
+          return;
+        }
         e.preventDefault();
         save();
       }

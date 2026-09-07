@@ -9,9 +9,9 @@ Writing mathematical expressions in standard LaTeX can often be verbose, repetit
 This plugin bridges the two worlds:
 
 - **Write Typst Math**: Type mathematical formulas with Typst's streamlined syntax (e.g., `sum_(i=1)^n i` or `mat(1, 2; 3, 4)`).
-- **Fast, Local WASM Engine**: Powered by WebAssembly for instant, zero-latency conversion without external servers.
+- **Fast, Local Engine**: Powered by a pure TypeScript Typst math engine for instant, zero-latency conversion without external servers.
 - **Native RemNote Math**: Stored and rendered as RemNote native KaTeX math elements (`{ i: "x", text: latex, block: boolean }`).
-- **Inline & Block Math Modes**: Seamlessly toggle between inline and multiline block math with automatic KaTeX environment alignment (`aligned` vs `align`).
+- **Inline & Block Math Modes**: Seamlessly toggle between inline and multiline block math with automatic KaTeX `aligned` environments for multiline math.
 - **Clean Storage**: No auxiliary comments, proprietary metadata, or special markup saved in your notes.
 - **Instant Bidirectional Editing**: Place your cursor on _any_ existing LaTeX math element and press <kbd>Alt</kbd> + <kbd>M</kbd>—it is automatically parsed and pre-filled in clean Typst syntax for editing.
 
@@ -63,6 +63,4 @@ This plugin bridges the two worlds:
 
 ## Credits
 
-Special thanks to [Tylax](https://github.com/lucifer1004/tylax) by [Gabriel Wu (lucifer1004)](https://github.com/lucifer1004), without which this plugin would not be possible. Tylax provides the powerful, bidirectional Typst ↔ LaTeX WebAssembly conversion engine used in this plugin.
-
-Tylax is distributed under the Apache-2.0 license. The bundled license is included in [`public/wasm/LICENSE`](public/wasm/LICENSE).
+Special thanks to [Tylax](https://github.com/lucifer1004/tylax) by [Gabriel Wu (lucifer1004)](https://github.com/lucifer1004), which powered earlier versions of this plugin. The conversion engine is now a pure TypeScript implementation in `src/math/engine/`.

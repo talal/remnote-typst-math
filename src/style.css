@@ -17,54 +17,57 @@ html[data-theme='dark'],
 body[data-theme='dark'] {
   background: var(--rn-clr-background-secondary, #2b2b33) !important;
 }
-/* Prism Typst Syntax Highlighting */
-.token.comment {
+/* Prism Typst Syntax Highlighting (scoped to the editor overlay so host
+   page code blocks are never restyled). */
+.typst-editor-highlight .token.comment {
   color: #6c6c7b;
   font-style: italic;
 }
 
-.token.string {
+.typst-editor-highlight .token.string {
   color: #a6e3a1;
 }
 
-.token.function {
+.typst-editor-highlight .token.function {
   color: #ef855f;
   font-weight: 500;
 }
 
-.token.keyword {
+.typst-editor-highlight .token.keyword {
   color: #f38ba8;
 }
 
-.token.parameter,
-.token.attr-name {
+.typst-editor-highlight .token.parameter,
+.typst-editor-highlight .token.attr-name {
   color: #fab387;
 }
 
-.token.builtin,
-.token.constant {
+.typst-editor-highlight .token.builtin,
+.typst-editor-highlight .token.constant {
   color: #89dceb;
 }
 
-.token.number {
+.typst-editor-highlight .token.number {
   color: #cba6f7;
 }
 
-.token.operator {
+.typst-editor-highlight .token.operator {
   color: #5e79ff;
 }
 
-.token.variable,
-.token.symbol {
+.typst-editor-highlight .token.variable,
+.typst-editor-highlight .token.symbol {
   color: #93c5fd;
 }
 
-.token.punctuation {
+.typst-editor-highlight .token.punctuation {
   color: #a6a6b8;
 }
 
-/* Shared popup interaction primitives. */
+/* Shared popup interaction primitives. Keep the floating editor usable on
+   narrow viewports (mobile has no Alt+M/B shortcuts). */
 .typst-math-popup {
+  max-width: calc(100vw - 32px);
   font-family: var(--rn-font-family, system-ui, sans-serif);
   background-color: var(--rn-clr-background-primary);
   border: 1px solid var(--rn-clr-background-secondary);
@@ -91,6 +94,9 @@ body[data-theme='dark'] {
 }
 
 .typst-popup-hover:hover:not(:disabled) {
+  /* Plain fallback for engines without color-mix; the enhancement below
+     overrides it where supported. */
+  background-color: rgba(127, 127, 127, 0.12);
   background-color: color-mix(in srgb, var(--rn-clr-content-primary, CanvasText) 8%, transparent);
 }
 
@@ -157,7 +163,9 @@ body[data-theme='dark'] {
 .typst-editor-input::selection {
   /* Translucent wash: the visible token colors live in the highlight layer
      beneath the textarea, so an opaque native selection would hide them.
-     Mirrors RemNote's native LaTeX editor, where selected code stays legible. */
+     Mirrors RemNote's native LaTeX editor, where selected code stays legible.
+     Plain fallback first for engines without color-mix. */
+  background: rgba(127, 127, 127, 0.35) !important;
   background: color-mix(
     in srgb,
     var(--rn-clr-background-light-accent, var(--rn-clr-background-accent, Highlight)) 45%,

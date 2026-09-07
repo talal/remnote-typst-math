@@ -41,8 +41,23 @@ export function insertRichTextAtRange(
     return [...inserted];
   }
 
+  // Normalize hostile ranges (negative, NaN, inverted, out-of-bounds from a
+  // stale session) so writes land predictably instead of appending at the end
+  // or slicing the wrong element.
+  const totalLength = original.reduce((sum, elem) => sum + getElementLength(elem), 0);
+  const normalizeOffset = (value: number): number => {
+    if (!Number.isFinite(value)) return totalLength;
+    return Math.min(totalLength, Math.max(0, Math.floor(value)));
+  };
+  let start = normalizeOffset(range.start);
+  let end = normalizeOffset(range.end);
+  if (start > end) {
+    const swapped = start;
+    start = end;
+    end = swapped;
+  }
+
   const result: RichTextInterface = [];
-  const { start, end } = range;
   let currentOffset = 0;
   let insertedDone = false;
 
@@ -126,6 +141,16 @@ export function insertRichTextAtRange(
     ) {
       return item.text.length > 0;
     }
+    if (
+      typeof item === 'object' &&
+      item !== null &&
+      item.i === 'x' &&
+      typeof item.text === 'string'
+    ) {
+      // No call site creates empty math (empty input is blocked upstream),
+      // so an empty survivor is always a stale-write artifact: drop it.
+      return item.text.length > 0;
+    }
     return true;
   });
 }
@@ -149,6 +174,13 @@ export type FoundMathElement = {
   range: { start: number; end: number };
 };
 
+/**
+ * Locate the math element overlapping a selection. When an expanded selection
+ * spans several math elements only the first overlap is returned; callers
+ * replace just that element's range and preserve the rest, which is the safe
+ * direction for a single-math editor.
+ */
+
 export function findMathElementAtRange(
   richText: RichTextInterface | undefined,
   selectionRange: { start: number; end: number },
@@ -169,7 +201,7 @@ export function findMathElementAtRange(
 
     if (isNativeLatexElement(elem)) {
       const overlaps =
-        start === end ? start >= elemStart && start <= elemEnd : start < elemEnd && end > elemStart;
+        start === end ? start >= elemStart && start < elemEnd : start < elemEnd && end > elemStart;
 
       if (overlaps) {
         return {
@@ -213,6 +245,9 @@ export function findMathElementAtRange(
     expandedOffset = expEnd;
 
     if (isNativeLatexElement(elem)) {
+      if (start === end && start === stdEnd) {
+        continue;
+      }
       const overlaps =
         start === end ? start >= expStart && start <= expEnd : start < expEnd && end > expStart;
 
@@ -256,6 +291,9 @@ export function findMathElementAtRange(
         : getElementLength(elem);
     }
     const expandedEnd = expandedStart + Math.max(1, single.elem.text.length);
+    if (start === end && start === single.range.end) {
+      return undefined;
+    }
     const overlaps =
       start === end
         ? start >= expandedStart && start < expandedEnd

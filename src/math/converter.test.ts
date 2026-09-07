@@ -1,12 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import * as tylax from '../../public/wasm/tylax.js';
-import { initSync } from '../../public/wasm/tylax.js';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   ConversionError,
   detectFormat,
   latexToTypst as wrapLatexToTypst,
+  resetInitializedModule,
   setInitializedModule,
   typstToLatex as wrapTypstToLatex,
   typstToVerifiedLatex,
@@ -18,17 +15,6 @@ import {
   setMathBlockAtRange,
 } from './remnote-math';
 import { highlightTypst } from './typst-grammar';
-
-beforeAll(() => {
-  initSync({
-    module: readFileSync(resolve(process.cwd(), 'public/wasm/tylax_bg.wasm')),
-  });
-  setInitializedModule(tylax as any);
-});
-
-// Engine conversion behavior (conversion table, multiline alignment, lenient
-// passthrough) and bidirectional fuzzing live in crates/engine/tests/engine.rs
-// and run via `cargo test --workspace`.
 
 describe('Engine Format Detection & Diagnostics', () => {
   it('classifies unambiguous LaTeX and Typst and defers ambiguous sources to unknown', () => {
@@ -47,10 +33,8 @@ describe('Engine Format Detection & Diagnostics', () => {
 });
 
 describe('Save-Time Round-Trip Verification', () => {
-  const realModule = tylax;
-
   afterEach(() => {
-    setInitializedModule(realModule);
+    resetInitializedModule();
   });
 
   it('accepts ordinary expressions that reach a fixed point after one cycle', () => {
@@ -124,10 +108,10 @@ describe('Save-Time Round-Trip Verification', () => {
   });
 
   it('refuses verification when the reverse leg degrades into error comments', () => {
-    // Tylax signals unsupported constructs by embedding `/* LaTeX Error: ... */`
-    // in its output. Such degraded output is non-canonical, and re-converting
-    // it is the known trigger for runaway engine cost, so saving must be
-    // refused instead of silently accepted.
+    // Foreign engines signal unsupported constructs by embedding
+    // `/* LaTeX Error: ... */` in their output. Such degraded output is
+    // non-canonical, and re-converting it is the known trigger for runaway
+    // engine cost, so saving must be refused instead of silently accepted.
     setInitializedModule({
       default: async () => undefined,
       typstToLatex: (input: string) => input,
@@ -152,7 +136,7 @@ describe('Save-Time Round-Trip Verification', () => {
 
   it('refuses fuzz-found subscript-prime poison through the real engine', () => {
     // Minimized fuzzer artifacts (oom-/timeout- classes): dense `_'<garbage>`
-    // chains whose reverse leg degrades into tylax error comments. The save
+    // chains whose reverse leg degrades into error comments. The save
     // path must reject them quickly instead of re-entering the engine.
     const fffd = String.fromCharCode(0xfffd);
     const poison = [
@@ -169,6 +153,21 @@ describe('Save-Time Round-Trip Verification', () => {
     ].join('');
     expect(() => typstToVerifiedLatex(poison)).toThrow(ConversionError);
   });
+
+  it('refuses fictional constructs that shred into single spaced letters', () => {
+    expect(() => typstToVerifiedLatex('fictional_token')).toThrow(ConversionError);
+    expect(() => typstToVerifiedLatex('arrow.r.double.bar')).toThrow(ConversionError);
+    expect(() => typstToVerifiedLatex('fictional')).toThrow(ConversionError);
+  });
+
+  it('refuses saves with unbalanced braces instead of storing unloadable LaTeX', () => {
+    // Fuzz-found: stray closers verified into stable garbage (`}vec(…)`).
+    // `}vec(x, y, z)` trips the brace-balance gate; `(a} + b` never gets
+    // that far (its unclosed `(` is refused at parse time). Both must refuse.
+    expect(() => typstToVerifiedLatex('}vec(x, y, z)')).toThrow(/unbalanced braces/);
+    expect(() => typstToVerifiedLatex('(a} + b')).toThrow(ConversionError);
+    expect(() => typstToVerifiedLatex('x_{a} }')).toThrow(ConversionError);
+  });
 });
 
 describe('Converter Module Wrapper & Sanitization', () => {
@@ -181,7 +180,7 @@ describe('Converter Module Wrapper & Sanitization', () => {
 
   it('refuses oversized input before reaching the engine', () => {
     // Runaway conversions freeze RemNote's main thread with no way to
-    // interrupt WASM; human-authored math never approaches this scale.
+    // interrupt them; human-authored math never approaches this scale.
     const oversized = 'x+'.repeat(9_000); // 18k chars > 16k limit
     expect(() => wrapTypstToLatex(oversized)).toThrow(/too large/);
     expect(() => wrapLatexToTypst(oversized)).toThrow(/too large/);
@@ -251,7 +250,7 @@ describe('Converter Module Wrapper & Sanitization', () => {
     expect(result.output).toBe(source);
   });
 
-  it('converts Tylax text brackets into a Typst string', () => {
+  it('converts LaTeX text brackets into a Typst string', () => {
     const result = wrapLatexToTypst('\\text{[is natural]}');
 
     expect(result.output).toBe('"is natural"');
@@ -286,7 +285,7 @@ describe('Converter Module Wrapper & Sanitization', () => {
     const result = wrapLatexToTypst('x~y');
 
     expect(result.output).toBe('x space.nobreak y');
-    expect(wrapTypstToLatex(result.output).output).toBe('x \\~ y');
+    expect(wrapTypstToLatex(result.output).output).toBe('x ~ y');
   });
   it('round-trips \\infty through its engine-default spelling', () => {
     const result = wrapLatexToTypst('\\infty');
@@ -369,6 +368,27 @@ describe('RichText Insertion & Selection Edge Cases', () => {
     expect(result).toEqual(['before ', remRef, sampleLatex, ' after']);
   });
 
+  it('normalizes hostile ranges instead of misplacing writes', () => {
+    // Inverted ranges are swapped (here: replace the whole string).
+    expect(insertRichTextAtRange(['hello'], [sampleLatex], { start: 5, end: 0 })).toEqual([
+      sampleLatex,
+    ]);
+    // Out-of-bounds offsets clamp to the content.
+    expect(insertRichTextAtRange(['hi'], [sampleLatex], { start: 99, end: 99 })).toEqual([
+      'hi',
+      sampleLatex,
+    ]);
+    expect(insertRichTextAtRange(['hi'], [sampleLatex], { start: -4, end: -4 })).toEqual([
+      sampleLatex,
+      'hi',
+    ]);
+  });
+
+  it('drops empty math elements instead of persisting them', () => {
+    const emptyMath = { i: 'x' as const, text: '', block: false };
+    expect(insertRichTextAtRange(['a'], [emptyMath], { start: 1, end: 1 })).toEqual(['a']);
+  });
+
   it('does not select math when the caret is in surrounding whitespace', () => {
     const richText = [' ', sampleLatex, ' '];
 
@@ -447,6 +467,12 @@ describe('RichText Insertion & Selection Edge Cases', () => {
     const math2 = { i: 'x' as const, text: 'b^2', block: false };
 
     expect(findMathElementAtRange([math1, ' + ', math2], { start: 2, end: 2 })).toBeUndefined();
+  });
+
+  it('does not capture single-element math when caret is at elemEnd (inserting after)', () => {
+    const mathElem = { i: 'x' as const, text: 'x^2', block: false };
+    expect(findMathElementAtRange([mathElem], { start: 1, end: 1 })).toBeUndefined();
+    expect(findMathElementAtRange([mathElem], { start: 0, end: 0 })?.element.text).toBe('x^2');
   });
 });
 

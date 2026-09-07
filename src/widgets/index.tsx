@@ -1,11 +1,11 @@
 import { declareIndexPlugin, WidgetLocation } from '@remnote/plugin-sdk';
 import type { ReactRNPlugin } from '@remnote/plugin-sdk';
-import '../style.css';
 import { openInsertTypstMath } from '../commands/math';
 import { initializeConverter } from '../math/converter';
 
 async function onActivate(plugin: ReactRNPlugin) {
-  // Pre-warm WASM converter in the background so opening/converting is instant
+  // Pre-warm the converter in the background so opening/converting is instant
+  // (synchronous no-op today; kept so first open never pays init cost later).
   void initializeConverter().catch(() => {});
 
   // Caret-anchored floating widget

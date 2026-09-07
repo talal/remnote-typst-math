@@ -1,10 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
-import * as tylax from '../../public/wasm/tylax.js';
-import { initSync } from '../../public/wasm/tylax.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RichTextInterface } from '@remnote/plugin-sdk';
-import { setInitializedModule } from '../math/converter';
+import { resetInitializedModule, setInitializedModule } from '../math/converter';
 import {
   EditorSession,
   parseSessionDescriptor,
@@ -13,11 +9,13 @@ import {
   type SessionEffects,
 } from './editor-session';
 
-beforeAll(() => {
-  initSync({
-    module: readFileSync(resolve(process.cwd(), 'public/wasm/tylax_bg.wasm')),
-  });
-  setInitializedModule(tylax as any);
+beforeEach(() => {
+  resetInitializedModule();
+});
+
+afterEach(() => {
+  resetInitializedModule();
+  vi.useRealTimers();
 });
 
 type HostCalls = {
@@ -50,14 +48,19 @@ function makeHost(
   });
   options.gateLatex?.(release);
 
+  let currentText: RichTextInterface = options.remText ? [...options.remText] : [];
+
   const host: EditorSessionHost = {
     openRem: async () => {
       calls.opened += 1;
       if (options.missing) return undefined;
       return {
-        text: options.remText ?? [],
+        get text() {
+          return currentText;
+        },
         write: async (text) => {
           if (options.failWrite) throw new Error('write failed');
+          currentText = [...text];
           calls.writes.push(text);
         },
       };
@@ -138,13 +141,27 @@ describe('parseSessionDescriptor', () => {
       parseSessionDescriptor({ target: { remId: 'r', range: { start: 'a', end: 0 } } }),
     ).toBeUndefined();
   });
+
+  it('rejects inverted, negative, and non-integer ranges', () => {
+    expect(
+      parseSessionDescriptor({ target: { remId: 'r', range: { start: 5, end: 2 } } }),
+    ).toBeUndefined();
+    expect(
+      parseSessionDescriptor({ target: { remId: 'r', range: { start: -1, end: 2 } } }),
+    ).toBeUndefined();
+    expect(
+      parseSessionDescriptor({ target: { remId: 'r', range: { start: 1.5, end: 2 } } }),
+    ).toBeUndefined();
+    expect(
+      parseSessionDescriptor({ target: { remId: 'r', range: { start: NaN, end: 2 } } }),
+    ).toBeUndefined();
+    expect(
+      parseSessionDescriptor({ target: { remId: '', range: { start: 0, end: 0 } } }),
+    ).toBeUndefined();
+  });
 });
 
 describe('EditorSession save flow', () => {
-  afterEach(() => {
-    setInitializedModule(tylax as any);
-  });
-
   it('closes without writing when an unchanged source is saved', async () => {
     const { host, calls } = makeHost();
     const { effects, calls: effectCalls } = makeEffects();
@@ -157,6 +174,23 @@ describe('EditorSession save flow', () => {
     expect(calls.writes).toHaveLength(0);
     expect(calls.toasts).toHaveLength(0);
     expect(effectCalls.pending).toEqual([]);
+  });
+
+  it('does not treat save as no-op if block mode was toggled even if source is unchanged', async () => {
+    const { host, calls } = makeHost();
+    const { effects } = makeEffects();
+    const session = new EditorSession(
+      host,
+      effects,
+      makeDescriptor({ initialSource: 'x', isBlock: false }),
+    );
+
+    session.isBlock = true;
+    await session.save();
+
+    expect(calls.dismissed).toBe(1);
+    expect(calls.latex).toEqual(['x']);
+    expect(calls.writes).toEqual([[{ i: 'x', text: 'x', block: true }]]);
   });
 
   it('blocks empty input with an inline error and stays open', async () => {
@@ -249,11 +283,194 @@ describe('EditorSession save flow', () => {
   });
 });
 
-describe('EditorSession block-mode toggling', () => {
-  afterEach(() => {
-    setInitializedModule(tylax as any);
+describe('EditorSession live preview and rollback', () => {
+  it('debounces rapid typing into a single on-the-fly live write', async () => {
+    vi.useFakeTimers();
+    const { host, calls } = makeHost({ remText: ['intro '] });
+    const { effects } = makeEffects();
+    const session = new EditorSession(
+      host,
+      effects,
+      makeDescriptor({
+        target: { remId: 'rem-1', range: { start: 6, end: 6 } },
+        isEditing: false,
+        initialSource: '',
+      }),
+    );
+
+    session.setSource('x');
+    session.setSource('x +');
+    session.setSource('x + y');
+
+    expect(calls.writes).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(80);
+
+    expect(calls.writes).toHaveLength(1);
+    expect(calls.writes[0]).toEqual(['intro ', { i: 'x', text: 'x + y', block: false }]);
   });
 
+  it('ignores incomplete Typst syntax silently during live updates', async () => {
+    const { host, calls } = makeHost({ remText: ['intro '] });
+    const { effects } = makeEffects();
+    const session = new EditorSession(
+      host,
+      effects,
+      makeDescriptor({
+        target: { remId: 'rem-1', range: { start: 6, end: 6 } },
+        isEditing: false,
+        initialSource: '',
+      }),
+    );
+
+    session.setSource('x');
+    await session.flushLiveUpdate();
+    expect(calls.writes).toHaveLength(1);
+
+    // Typing unclosed matrix function call (incomplete syntax)
+    session.setSource('mat(1, 2');
+    await session.flushLiveUpdate();
+
+    // No new write, no error toast thrown
+    expect(calls.writes).toHaveLength(1);
+    expect(calls.toasts).toHaveLength(0);
+  });
+
+  it('reverts the Rem to the original state when cancelled after live updates', async () => {
+    const originalText: RichTextInterface = ['intro ', ' outro'];
+    const { host, calls } = makeHost({ remText: originalText });
+    const { effects } = makeEffects();
+    const session = new EditorSession(
+      host,
+      effects,
+      makeDescriptor({
+        target: { remId: 'rem-1', range: { start: 6, end: 6 } },
+        isEditing: false,
+        initialSource: '',
+      }),
+    );
+
+    session.setSource('alpha + beta');
+    await session.flushLiveUpdate();
+
+    expect(calls.writes).toHaveLength(1);
+    expect(calls.writes[0]).toEqual([
+      'intro ',
+      { i: 'x', text: String.raw`\alpha + \beta`, block: false },
+      ' outro',
+    ]);
+
+    // User hits Escape / Cancel
+    await session.dismiss();
+
+    expect(calls.dismissed).toBe(1);
+    expect(calls.writes.at(-1)).toEqual(originalText);
+  });
+
+  it('reverts edited math back to its pristine original state on cancel', async () => {
+    const pristineMath = { i: 'x' as const, text: 'a_0', block: false };
+    const originalText: RichTextInterface = ['pre ', pristineMath, ' post'];
+    const { host, calls } = makeHost({ remText: originalText });
+    const { effects } = makeEffects();
+    const session = new EditorSession(
+      host,
+      effects,
+      makeDescriptor({
+        target: { remId: 'rem-1', range: { start: 4, end: 5 } },
+        isEditing: true,
+        initialSource: 'a_0',
+      }),
+    );
+
+    session.setSource('b_1 + c_2');
+    await session.flushLiveUpdate();
+
+    expect(calls.writes).toHaveLength(1);
+    expect(calls.writes[0]).toEqual(['pre ', { i: 'x', text: 'b_1 + c_2', block: false }, ' post']);
+
+    // Cancel
+    await session.dismiss();
+
+    expect(calls.dismissed).toBe(1);
+    expect(calls.writes.at(-1)).toEqual(originalText);
+  });
+
+  it('commits verified math on save and does not roll back on subsequent dismissal', async () => {
+    const originalText: RichTextInterface = ['intro '];
+    const { host, calls } = makeHost({ remText: originalText });
+    const { effects } = makeEffects();
+    const session = new EditorSession(
+      host,
+      effects,
+      makeDescriptor({
+        target: { remId: 'rem-1', range: { start: 6, end: 6 } },
+        isEditing: false,
+        initialSource: '',
+      }),
+    );
+
+    session.setSource('x^2');
+    await session.save();
+
+    expect(calls.dismissed).toBe(1);
+    expect(calls.writes[0]).toEqual(['intro ', { i: 'x', text: 'x^2', block: false }]);
+
+    // Dismissal after save does not revert
+    await session.dismiss();
+    expect(calls.writes).toHaveLength(1);
+  });
+
+  it('removes previewed math when user clears input during insertion', async () => {
+    const originalText: RichTextInterface = ['start'];
+    const { host, calls } = makeHost({ remText: originalText });
+    const { effects } = makeEffects();
+    const session = new EditorSession(
+      host,
+      effects,
+      makeDescriptor({
+        target: { remId: 'rem-1', range: { start: 5, end: 5 } },
+        isEditing: false,
+        initialSource: '',
+      }),
+    );
+
+    session.setSource('x');
+    await session.flushLiveUpdate();
+    expect(calls.writes).toHaveLength(1);
+
+    // User deletes everything
+    session.setSource('');
+    await session.flushLiveUpdate();
+
+    expect(calls.writes).toHaveLength(2);
+    expect(calls.writes[1]).toEqual(originalText);
+  });
+
+  it('live-toggles block mode immediately when live math is active', async () => {
+    const { host, calls } = makeHost({ remText: ['pre '] });
+    const { effects } = makeEffects();
+    const session = new EditorSession(
+      host,
+      effects,
+      makeDescriptor({
+        target: { remId: 'rem-1', range: { start: 4, end: 4 } },
+        isEditing: false,
+        initialSource: '',
+      }),
+    );
+
+    session.setSource('x');
+    await session.flushLiveUpdate();
+    expect(calls.writes).toHaveLength(1);
+    expect(calls.writes[0][1]).toMatchObject({ block: false });
+
+    await session.toggleBlock(true);
+    expect(calls.writes).toHaveLength(2);
+    expect(calls.writes[1][1]).toMatchObject({ block: true });
+  });
+});
+
+describe('EditorSession block-mode toggling', () => {
   const alignedElement = {
     i: 'x' as const,
     text: String.raw`\begin{aligned}x &= 1\end{aligned}`,
@@ -312,5 +529,92 @@ describe('EditorSession block-mode toggling', () => {
     expect(effectCalls.blocks).toEqual([true]);
     expect(calls.opened).toBe(0);
     expect(calls.writes).toHaveLength(0);
+  });
+
+  it('reverts modified Rem on dispose when popup unmounts on outside click', async () => {
+    const initialText = ['prefix '];
+    const { host, calls } = makeHost({ remText: initialText });
+    const { effects } = makeEffects();
+    const session = new EditorSession(
+      host,
+      effects,
+      makeDescriptor({ target: { remId: 'rem-1', range: { start: 7, end: 7 } } }),
+    );
+
+    session.setSource('x + y');
+    await session.flushLiveUpdate();
+    expect(calls.writes.length).toBeGreaterThan(0);
+
+    session.dispose();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(calls.writes.at(-1)).toEqual(initialText);
+  });
+
+  it('restores initial Rem text when reverting back to initial source on save', async () => {
+    const initialLatex = { i: 'x' as const, text: 'a + b', block: false };
+    const initialText = ['pre ', initialLatex, ' post'];
+    const { host, calls } = makeHost({ remText: initialText });
+    const { effects } = makeEffects();
+    const session = new EditorSession(
+      host,
+      effects,
+      makeDescriptor({
+        target: { remId: 'rem-1', range: { start: 4, end: 5 } },
+        initialSource: 'a + b',
+        isEditing: true,
+      }),
+    );
+
+    session.setSource('x + y');
+    await session.flushLiveUpdate();
+    expect(calls.writes.length).toBeGreaterThan(0);
+
+    session.setSource('a + b');
+    await session.save();
+
+    expect(calls.writes.at(-1)).toEqual(initialText);
+    expect(calls.dismissed).toBe(1);
+  });
+
+  it('does not revert Rem text when disposed while save is in flight', async () => {
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+
+    const initialText = ['prefix '];
+    const { calls } = makeHost({ remText: initialText });
+    const { effects } = makeEffects();
+    const host: EditorSessionHost = {
+      openRem: async () => ({
+        text: [...initialText],
+        write: async (text) => {
+          calls.writes.push(text);
+          await writeGate;
+        },
+      }),
+      createLatexElement: async (latex, isBlock) => [
+        { i: 'x' as const, text: latex, block: isBlock },
+      ],
+      notify: async () => undefined,
+      dismiss: async () => {
+        calls.dismissed += 1;
+      },
+    };
+
+    const session = new EditorSession(
+      host,
+      effects,
+      makeDescriptor({ target: { remId: 'rem-1', range: { start: 7, end: 7 } } }),
+    );
+
+    session.setSource('x + y');
+    const savePromise = session.save();
+    session.dispose();
+    releaseWrite();
+    await savePromise;
+
+    expect(calls.writes.at(-1)).not.toEqual(initialText);
   });
 });
