@@ -20,7 +20,7 @@ This plugin bridges the two worlds:
 ### 1. Inserting New Math
 
 1. Place your cursor anywhere in a Rem.
-2. Press <kbd>Alt</kbd> + <kbd>M</kbd> (or use the slash command `/typst`).
+2. Press <kbd>Alt</kbd> + <kbd>M</kbd> (or run “Insert / Edit Typst Math” from the command menu).
 3. Type your formula using Typst syntax in the popup.
 4. Press <kbd>Enter</kbd> or click **Done** to insert it.
 
@@ -53,13 +53,17 @@ This plugin bridges the two worlds:
 | :--- | :--- | :--- |
 | **Fractions** | `a / b` | `\frac{a}{b}` |
 | **Summations** | `sum_(i=1)^n i` | `\sum_{i=1}^{n} i` |
-| **Integrals** | `integral_0^oo e^(-x^2) dif x` | `\int_{0}^{\infty} e^{-x^2} dx` |
+| **Integrals** | `integral_0^oo e^(-x^2) dif x` | `\int_{0}^{\infty} e^{-x^2} \mathrm{d} x` |
 | **Matrices** | `mat(1, 2; 3, 4)` | `\begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}` |
 | **Square Roots** | `sqrt(x^2 + y^2)` | `\sqrt{x^2 + y^2}` |
-| **Cases / Systems** | `f(x) = cases(1 "if" x > 0, 0 "otherwise")` | `f(x) = \begin{cases} 1 & \text{if } x > 0 \\ 0 & \text{otherwise} \end{cases}` |
+| **Cases / Systems** | `f(x) = cases(1 "if" x > 0, 0 "otherwise")` | `f(x) = \begin{cases} 1 & \text{if} x > 0 \\ 0 & \text{otherwise} \end{cases}` |
 | **Multiline Alignment** | `x &= 1 \ &= 2` | `\begin{aligned} x &= 1 \\ &= 2 \end{aligned}` |
 <!-- prettier-ignore-end -->
 <!-- dprint-ignore-end -->
+
+## When Math Can't Be Saved
+
+If an expression has no faithful KaTeX equivalent (or would silently change meaning when re-opened for editing), the popup refuses to save it and explains why instead of writing corrupted math. Simplify the expression or write that part directly in LaTeX.
 
 ## Credits
 

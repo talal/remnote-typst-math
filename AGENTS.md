@@ -29,7 +29,7 @@ Update Rem at target range via rem.setText()
 ## Project Structure
 
 - `src/`
-  - `commands/math.ts`: Target editor & selection capture, math element detection (`detectFormat` dispatch), command definitions.
+  - `commands/math.ts`: Popup open flow — target editor & selection capture, math element detection (`detectFormat` dispatch), caret-anchored positioning, session handoff (command registration lives in `widgets/index.tsx`).
   - `math/converter.ts`: Converter wrapper; input sanitization; cost guards; save-time round-trip verification (`typstToVerifiedLatex`).
   - `math/engine/`: Pure TypeScript Typst Math engine covering the complete Typst math grammar.
     - `types.ts`: AST definitions for Typst math constructs.
@@ -68,8 +68,8 @@ Plugin:
 - **Type Checking Only**: `npm run check-types` (`vp check --no-fmt --no-lint`)
 - **Start Dev Server**: `npm run dev` (Runs webpack-dev-server on port 8080 with HMR)
 - **Production Build & Zip**: `npm run build` (Validates plugin manifest, bundles with Webpack, and packages `PluginZip.zip`)
-- **Benchmark Conversion Cost**: `npm run bench` (Times the full save path — one Typst → LaTeX conversion plus the bounded verification legs — against the pure TypeScript engine; typical expressions stay under 0.1 ms.)
-- **Fuzz Conversion Engine**: `npm run fuzz` (Seeded grammar fuzz of the TypeScript engine with fixed-point/artifact/brace-balance oracles; `--seconds=N`, `--iterations=N`, `--seed=N`. Also via `just fuzz` with `FUZZ_TIME`.)
+- **Benchmark Conversion Cost**: `npm run bench` (Times the full save path — one Typst → LaTeX conversion plus the bounded verification legs — against the pure TypeScript engine; small expressions measure ≈0.05–0.2 ms, far under the 16.7 ms frame budget.)
+- **Fuzz Conversion Engine**: `npm run fuzz` (Seeded grammar fuzz of the TypeScript engine with fixed-point/artifact/brace-balance oracles; defaults 100000 iterations / 120 s, `--seconds=N`, `--iterations=N`, `--seed=N` — the run stops at whichever budget binds first. Also via `just fuzz` with `FUZZ_TIME`.)
 
 ## Safety
 
@@ -82,8 +82,9 @@ Plugin:
 
 1. **Floating Widget Lifecycle & Positioning**:
    - Registered as `WidgetLocation.FloatingWidget`.
-   - Anchored directly beneath the active cursor using `plugin.editor.getCaretPosition()` and `plugin.window.openFloatingWidget()`.
+   - Anchored directly beneath the active cursor using `plugin.editor.getCaretPosition()` and `plugin.window.openFloatingWidget()` (flips above the caret near the viewport bottom; horizontal offset clamped).
    - Closes automatically when clicking outside or via `plugin.window.closeAllFloatingWidgets()`.
+   - Closing scopes to this popup's own widget id first; the global close is only a last-resort fallback.
    - State/target data is passed seamlessly via `plugin.storage.setSession('typst_math_data', popupData)`.
    - Any database/Rem updates (e.g., `rem.setText`) must occur **before** closing.
 
@@ -98,14 +99,15 @@ Plugin:
    - The emitter (`emitter.ts`) outputs clean KaTeX LaTeX with automatic `\begin{aligned}` wrapping for multiline/aligned math, delimiter canonicalization (`\begin{pmatrix}`, `\begin{bmatrix}`, etc.), script ordering (primes precede subscripts `f'_1`), upright/bold font wrapping, and spacing primitives (`\ `, `~`, `\quad`).
    - The canonical decompiler (`decompiler.ts`) recovers clean Typst source from existing RemNote KaTeX math elements when re-opening math for editing.
    - When editing any math element, the wrapper detects whether the stored content is LaTeX (`detectFormat`) and pre-populates the floating editor with normalized Typst source. Non-LaTeX content is pre-filled verbatim instead of force-converted.
-   - Pressing Enter on an untouched editor (editing mode, unchanged source) closes the popup without rewriting the Rem, so stored math is never degraded by a lossy no-op round-trip.
+   - Pressing Enter on an untouched editor (editing mode, unchanged source and block mode) closes the popup and reverts any live-preview writes, so stored math is never degraded by a lossy no-op round-trip.
    - Saving runs a fixed-point round-trip verification (`typstToVerifiedLatex`): expressions whose LaTeX mutates across a conversion cycle are refused with an error instead of being written.
-   - Conversion cost guards in `math/converter.ts` refuse inputs beyond human-authored scale (length/nesting caps) and malformed recovery comments.
+   - Conversion cost guards in `math/converter.ts` refuse inputs beyond human-authored scale (length/nesting caps, brace-balance gate, stack-overflow mapped to a complexity error) and malformed recovery comments.
+   - The parser refuses unclosed/mismatched delimiters and `$`/`#` with no math meaning; the decompiler throws on unsupported environments/commands so the editor pre-fills the original LaTeX verbatim instead of corrupting it on save.
 
 4. **Engine Convergence & Testing**:
    - All parser, emitter, and decompiler logic lives in `src/math/engine/`.
    - Testing runs 100% headless outside of a browser or RemNote instance using Vitest (`npm run test` or `vp test`).
-   - The test suite covers all 266+ symbols, all 22 shorthands, all 28 standard functions, cases variants, matrix/vector delimiters, operator precedence, accents, and round-trip invariance.
+   - The test suite covers all 372 symbols, all 38 shorthands, all 70+ standard function forms, cases variants, matrix/vector delimiters, operator precedence, accents, and round-trip invariance.
    - `scripts/fuzz-conversion.ts` (`npm run fuzz`) extends coverage with seeded grammar fuzzing: every accepted save must be a verification fixed point, with no engine artifacts or unbalanced braces.
 
 5. **Native LaTeX Schema**:
